@@ -1,0 +1,156 @@
+# VibeSpeak — Electron Builder Configuration
+# Cross-platform build config for Windows and Linux
+
+appId: com.vibespeak.app
+productName: VibeSpeak
+copyright: Copyright © 2024 VibeSpeak Team
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+
+extraMetadata:
+  main: dist-electron/main.js
+
+asar: true
+asarUnpack:
+  - dist-electron/**
+
+# Windows Configuration
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+# Windows NSIS Installer
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: VibeSpeak
+  deleteAppDataOnUninstall: false
+  displayLanguageSelector: false
+
+# Linux Configuration
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+        - arm64
+    - target: rpm
+      arch:
+        - x64
+    - target: tar.gz
+      arch:
+        - x64
+  category: Network
+  maintainer: VibeSpeak Team <team@vibespeak.app>
+  synopsis: VibeSpeak — TeamSpeak-style community voice and text platform
+  description: |
+    A self-hosted, TeamSpeak-inspired community platform with static servers,
+    real-time voice channels, and text chat. Features guest accounts, WebRTC
+    voice, screen sharing, and Discord-style UI.
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  desktop:
+    Name: VibeSpeak
+    Comment: TeamSpeak-style community platform
+    Categories: Network;Chat;InstantMessaging;
+    StartupWMClass: vibespeak
+    MimeType: x-scheme-handler/vibespeak;
+
+# DEB Package
+deb:
+  priority: optional
+  compression: xz
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libdrm2
+    - libgbm1
+    - libxcb-dri3-0
+  packageCategory: net
+
+# RPM Package
+rpm:
+  compression: xz
+  depends:
+    - gtk3
+    - libnotify
+    - nss
+    - libXScrnSaver
+    - libXtst
+    - xdg-utils
+    - at-spi2-core
+  packageCategory: Applications/Internet
+
+# AppImage
+appImage: {}
+
+# macOS Configuration (for future support)
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+
+# DMG
+dmg:
+  iconSize: 100
+  contents:
+    - x: 380
+      y: 180
+      type: link
+      path: /Applications
+    - x: 130
+      y: 180
+      type: file
+
+# Publish
+publish:
+  provider: github
+  owner: yourusername
+  repo: vibespeak
+  releaseType: release
+
+# Protocols
+protocols:
+  - name: VibeSpeak
+    schemes:
+      - vibespeak
+
+# File Associations
+fileAssociations:
+  - ext:
+      - .vibespeak
+    name: VibeSpeak Server Config
+    description: VibeSpeak Server Configuration File
+    role: Editor

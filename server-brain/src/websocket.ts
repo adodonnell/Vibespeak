@@ -1,0 +1,488 @@
+import { WebSocketServer, WebSocket } from 'ws';
+import { logger } from './utils/logger.js';
+import { userService } from './api/users.js';
+
+interface SignalingMessage {
+  type: 'offer' | 'answer' | 'ice-candidate' | 'join' | 'leave' | 'user-joined' | 'user-left' | 'ping' | 'pong' | 'new-message' | 'message-updated' | 'message-deleted' | 'typing-start' | 'typing-stop' | 'screen-share-start' | 'screen-share-stop';
+  from?: string;
+  to?: string;
+  roomId?: string;
+  data?: unknown;
+  username?: string;
+  messageId?: number;
+  content?: string;
+  quality?: string;
+}
+
+// Event handlers for real-time message updates
+type MessageEventHandler = (data: { messageId: number; channelId: number; content: string; userId: number; username: string }) => void;
+type TypingHandler = (data: { channelId: number; userId: number; username: string; isTyping: boolean }) => void;
+
+interface Room {
+  clients: Map<string, WebSocket>;
+  usernames: Map<string, string>; // clientId -> username
+}
+
+// Generate unique ID using crypto
+function generateClientId(): string {
+  const timestamp = Date.now().toString(36);
+  const randomPart = Math.random().toString(36).substring(2, 15);
+  return `user_${timestamp}_${randomPart}`;
+}
+
+export class SignalingServer {
+  private wss: WebSocketServer | null = null;
+  private rooms: Map<string, Room> = new Map();
+  private clientRooms: Map<WebSocket, string> = new Map();
+  private clientIds: Map<WebSocket, string> = new Map();
+  private clientUsernames: Map<WebSocket, string> = new Map(); // Track usernames
+  private clientUserIds: Map<WebSocket, number> = new Map(); // Track database user IDs for presence
+  private pingIntervals: Map<WebSocket, NodeJS.Timeout> = new Map();
+  private pingTimeouts: Map<WebSocket, NodeJS.Timeout> = new Map();
+  private readonly PING_INTERVAL = 30000; // 30 seconds
+  private readonly PING_TIMEOUT = 5000; // 5 seconds
+
+  start(port: number = 3002): void {
+    this.wss = new WebSocketServer({ port });
+    
+    logger.info(`WebSocket signaling server running on port ${port}`);
+    
+    // Reset all users to offline on startup (they'll reconnect and go online)
+    (async () => {
+      try {
+        const { query } = await import('./db/database.js');
+        await query("UPDATE users SET status = 'offline'");
+        logger.info('Reset all user statuses to offline');
+      } catch (err) {
+        logger.error('Failed to reset user statuses:', err);
+      }
+    })();
+
+    this.wss.on('connection', (ws: WebSocket) => {
+      const clientId = generateClientId();
+      this.clientIds.set(ws, clientId);
+      logger.info(`Client connected: ${clientId}`);
+
+      // Start heartbeat for this connection
+      this.startHeartbeat(ws);
+
+      ws.on('message', (data: Buffer) => {
+        try {
+          const message: SignalingMessage = JSON.parse(data.toString());
+          this.handleMessage(ws, message);
+        } catch (err) {
+          logger.error('Failed to parse message:', err);
+        }
+      });
+
+      ws.on('close', () => {
+        this.handleDisconnect(ws);
+      });
+
+      ws.on('error', (err) => {
+        logger.error('WebSocket error:', err);
+        this.handleDisconnect(ws);
+      });
+
+      // Handle pong response
+      ws.on('pong', () => {
+        // Clear the ping timeout since we received a response
+        this.clearPingTimeout(ws);
+      });
+    });
+
+    this.wss.on('error', (err) => {
+      logger.error('WebSocket server error:', err);
+    });
+  }
+
+  private startHeartbeat(ws: WebSocket): void {
+    // Clear any existing interval
+    this.stopHeartbeat(ws);
+
+    const interval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.ping();
+          // Set timeout to disconnect if pong is not received
+          this.setPingTimeout(ws);
+        } catch (err) {
+          logger.error('Failed to send ping:', err);
+          this.handleDisconnect(ws);
+        }
+      } else {
+        this.stopHeartbeat(ws);
+      }
+    }, this.PING_INTERVAL);
+
+    this.pingIntervals.set(ws, interval);
+  }
+
+  private setPingTimeout(ws: WebSocket): void {
+    // Clear any existing timeout
+    this.clearPingTimeout(ws);
+
+    const timeout = setTimeout(() => {
+      logger.warn(`Client ${this.clientIds.get(ws)} did not respond to ping, disconnecting`);
+      this.handleDisconnect(ws);
+    }, this.PING_TIMEOUT);
+
+    this.pingTimeouts.set(ws, timeout);
+  }
+
+  private clearPingTimeout(ws: WebSocket): void {
+    const timeout = this.pingTimeouts.get(ws);
+    if (timeout) {
+      clearTimeout(timeout);
+      this.pingTimeouts.delete(ws);
+    }
+  }
+
+  private stopHeartbeat(ws: WebSocket): void {
+    const interval = this.pingIntervals.get(ws);
+    if (interval) {
+      clearInterval(interval);
+      this.pingIntervals.delete(ws);
+    }
+    this.clearPingTimeout(ws);
+  }
+
+  private handleMessage(ws: WebSocket, message: SignalingMessage): void {
+    const clientId = this.clientIds.get(ws);
+
+    // Input validation for message types that require specific fields
+    switch (message.type) {
+      case 'join':
+        // Validate roomId - must be a safe string
+        if (message.roomId && typeof message.roomId !== 'string') {
+          logger.warn('Invalid roomId type received');
+          return;
+        }
+        // Sanitize roomId - allow alphanumeric, dash, underscore, and spaces (for room names like "raid party")
+        // Also allow length up to 128 characters
+        if (message.roomId && !/^[a-zA-Z0-9_ -]{1,128}$/.test(message.roomId)) {
+          logger.warn('Invalid roomId format received:', message.roomId);
+          return;
+        }
+        // Validate username if provided - safe characters only
+        if (message.username && typeof message.username !== 'string') {
+          logger.warn('Invalid username type received');
+          return;
+        }
+        if (message.username && !/^[a-zA-Z0-9_]{1,32}$/.test(message.username)) {
+          logger.warn('Invalid username format received');
+          return;
+        }
+        // Store username if provided and set user online
+        if (message.username) {
+          this.clientUsernames.set(ws, message.username);
+          logger.info(`User "${message.username}" connecting as ${clientId}`);
+          
+          // Look up user in database and set online
+          (async () => {
+            try {
+              const user = await userService.getUserByUsername(message.username!);
+              if (user) {
+                this.clientUserIds.set(ws, user.id);
+                await userService.updateStatus(user.id, 'online');
+                logger.debug(`User ${user.id} (${message.username}) set to online`);
+              }
+            } catch (err) {
+              logger.error('Failed to set user online:', err);
+            }
+          })();
+        }
+        this.handleJoin(ws, message.roomId || 'default', clientId!);
+        break;
+      case 'leave':
+        this.handleLeave(ws);
+        break;
+      case 'offer':
+      case 'answer':
+        // Validate signaling data exists
+        if (!message.data) {
+          logger.warn(`Invalid ${message.type} - no data provided`);
+          return;
+        }
+        this.handleSignaling(ws, message);
+        break;
+      case 'ice-candidate':
+        // Validate target client ID
+        if (!message.to || typeof message.to !== 'string') {
+          logger.warn('Invalid ice-candidate - no valid target');
+          return;
+        }
+        this.handleSignaling(ws, message);
+        break;
+
+      case 'screen-share-start':
+        // Handle screen share start - broadcast to room
+        this.broadcastScreenShare(ws, message, true);
+        break;
+
+      case 'screen-share-stop':
+        // Handle screen share stop - broadcast to room
+        this.broadcastScreenShare(ws, message, false);
+        break;
+
+      default:
+        logger.warn(`Unknown message type received: ${message.type}`);
+    }
+  }
+
+  private broadcastScreenShare(ws: WebSocket, message: SignalingMessage, isStarting: boolean): void {
+    const roomId = this.clientRooms.get(ws);
+    if (!roomId) return;
+
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+
+    const fromId = this.clientIds.get(ws);
+    const fromUsername = this.clientUsernames.get(ws);
+
+    // Broadcast to all other users in the room
+    room.clients.forEach((client, id) => {
+      if (id !== fromId && client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify({
+          type: isStarting ? 'screen-share-start' : 'screen-share-stop',
+          from: fromId,
+          username: fromUsername,
+          roomId,
+          quality: message.quality,
+        }));
+      }
+    });
+  }
+
+  private handleJoin(ws: WebSocket, roomId: string, clientId: string): void {
+    // Leave current room if in one
+    const currentRoomId = this.clientRooms.get(ws);
+    if (currentRoomId) {
+      this.handleLeave(ws);
+    }
+
+    // Create room if doesn't exist
+    if (!this.rooms.has(roomId)) {
+      this.rooms.set(roomId, { clients: new Map(), usernames: new Map() });
+    }
+
+    const room = this.rooms.get(roomId)!;
+    room.clients.set(clientId, ws);
+    
+    // Store username
+    const username = this.clientUsernames.get(ws) || clientId;
+    room.usernames.set(clientId, username);
+    
+    this.clientRooms.set(ws, roomId);
+
+    logger.info(`Client ${clientId} joined room ${roomId}`);
+
+    // Notify others in room — send the NEW joiner's username (not the existing user's)
+    const joinerUsername = room.usernames.get(clientId) || clientId;
+    room.clients.forEach((client, id) => {
+      if (id !== clientId && client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify({
+          type: 'user-joined',
+          from: clientId,
+          username: joinerUsername,
+          roomId
+        }));
+      }
+    });
+
+    // Send room info to joiner — include usernames for existing users
+    ws.send(JSON.stringify({
+      type: 'room-joined',
+      roomId,
+      users: Array.from(room.clients.keys())
+        .filter(id => id !== clientId)
+        .map(id => ({ id, username: room.usernames.get(id) || id })),
+    }));
+
+    // Broadcast updated voice channel state to all 'global' observers
+    // so the channel list updates in real-time for everyone, not just room members
+    if (roomId !== 'global') {
+      this.broadcastVoiceState();
+    }
+  }
+
+  private handleLeave(ws: WebSocket): void {
+    const roomId = this.clientRooms.get(ws);
+    const clientId = this.clientIds.get(ws);
+
+    if (!roomId || !clientId) return;
+
+    const room = this.rooms.get(roomId);
+    if (room) {
+      room.clients.delete(clientId);
+      room.usernames.delete(clientId);
+      
+      // Notify others
+      room.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({
+            type: 'user-left',
+            from: clientId,
+            username: this.clientUsernames.get(ws),
+            roomId
+          }));
+        }
+      });
+
+      // Clean up empty rooms
+      if (room.clients.size === 0) {
+        this.rooms.delete(roomId);
+      }
+    }
+
+    this.clientRooms.delete(ws);
+    logger.info(`Client ${clientId} left room ${roomId}`);
+
+    // Broadcast updated voice channel state to global observers when someone leaves
+    if (roomId !== 'global') {
+      this.broadcastVoiceState();
+    }
+  }
+
+  private handleSignaling(ws: WebSocket, message: SignalingMessage): void {
+    const roomId = this.clientRooms.get(ws);
+    if (!roomId) return;
+
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+
+    const fromId = this.clientIds.get(ws);
+    const targetId = message.to;
+
+    if (targetId) {
+      // Send to specific client
+      const targetClient = room.clients.get(targetId);
+      if (targetClient && targetClient.readyState === WebSocket.OPEN) {
+        targetClient.send(JSON.stringify({
+          ...message,
+          from: fromId
+        }));
+      }
+    } else {
+      // Broadcast to all in room
+      room.clients.forEach((client, id) => {
+        if (id !== fromId && client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({
+            ...message,
+            from: fromId
+          }));
+        }
+      });
+    }
+  }
+
+  private handleDisconnect(ws: WebSocket): void {
+    // Stop heartbeat for this connection
+    this.stopHeartbeat(ws);
+    
+    // Set user offline in database before cleanup
+    const userId = this.clientUserIds.get(ws);
+    const username = this.clientUsernames.get(ws);
+    if (userId) {
+      (async () => {
+        try {
+          await userService.updateStatus(userId, 'offline');
+          logger.debug(`User ${userId} (${username}) set to offline`);
+        } catch (err) {
+          logger.error('Failed to set user offline:', err);
+        }
+      })();
+    }
+    
+    this.handleLeave(ws);
+    const clientId = this.clientIds.get(ws);
+    if (clientId) {
+      logger.info(`Client disconnected: ${clientId}`);
+      this.clientIds.delete(ws);
+    }
+    this.clientUsernames.delete(ws);
+    this.clientUserIds.delete(ws);
+  }
+
+  stop(): void {
+    if (this.wss) {
+      this.wss.close();
+      this.wss = null;
+      logger.info('WebSocket server stopped');
+    }
+  }
+
+  // Get users in a specific voice channel room
+  getRoomUsers(roomId: string): string[] {
+    const room = this.rooms.get(roomId);
+    if (!room) return [];
+    return Array.from(room.clients.keys());
+  }
+
+  // Get all rooms and their users with usernames
+  getAllRooms(): { roomId: string; users: { clientId: string; username: string }[] }[] {
+    const result: { roomId: string; users: { clientId: string; username: string }[] }[] = [];
+    this.rooms.forEach((room, roomId) => {
+      const users: { clientId: string; username: string }[] = [];
+      room.clients.forEach((_, clientId) => {
+        users.push({
+          clientId,
+          username: room.usernames.get(clientId) || clientId
+        });
+      });
+      result.push({ roomId, users });
+    });
+    return result;
+  }
+
+  // Broadcast a message to all clients in a specific room (for real-time chat)
+  broadcastToRoom(roomId: string, message: object): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+
+    const messageStr = JSON.stringify(message);
+    room.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(messageStr);
+      }
+    });
+  }
+
+  // Broadcast current voice channel state to ALL connected clients.
+  // We cannot restrict this to the 'global' room because joinChannelRoom()
+  // moves clients out of 'global' into their current text-channel room.
+  private broadcastVoiceState(): void {
+    // Collect named (voice) rooms only — skip 'global' and numeric text-channel rooms
+    const voiceChannels: { channelId: string; users: { clientId: string; username: string }[] }[] = [];
+    this.rooms.forEach((room, roomId) => {
+      if (roomId === 'global') return;
+      // Text-channel rooms use their numeric DB id as the roomId — skip them
+      if (/^\d+$/.test(roomId)) return;
+      const users: { clientId: string; username: string }[] = [];
+      room.clients.forEach((_, clientId) => {
+        users.push({ clientId, username: room.usernames.get(clientId) || clientId });
+      });
+      voiceChannels.push({ channelId: roomId, users });
+    });
+
+    const payload = JSON.stringify({ type: 'voice-channel-update', channels: voiceChannels });
+    // Broadcast to every connected WebSocket regardless of which room it's in
+    this.wss?.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(payload);
+      }
+    });
+  }
+
+  // Broadcast to all connected clients (global notifications)
+  broadcastToAll(message: object): void {
+    const messageStr = JSON.stringify(message);
+    this.wss?.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(messageStr);
+      }
+    });
+  }
+}
+
+export const signalingServer = new SignalingServer();

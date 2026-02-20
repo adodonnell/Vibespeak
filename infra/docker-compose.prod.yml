@@ -1,0 +1,90 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# VibeSpeak — Production VPS docker-compose
+# Usage:
+#   1. cp infra/.env.example infra/.env   (fill in all required values)
+#   2. docker compose -f infra/docker-compose.prod.yml up -d
+# ─────────────────────────────────────────────────────────────────────────────
+
+version: '3.9'
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: vibespeak-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-vibespeak}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB:       ${POSTGRES_DB:-vibespeak}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - vibespeak-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vibespeak}"]
+      interval: 10s
+      timeout:  5s
+      retries:  5
+
+  # ── Server Brain (HTTP API + WebSocket + Voice Relay) ───────────────────────
+  server-brain:
+    build:
+      context: ../server-brain
+      dockerfile: Dockerfile
+    container_name: vibespeak-server
+    restart: unless-stopped
+    ports:
+      - "3001:3001"      # HTTP API
+      - "3002:3002"      # WebSocket signaling
+      - "9988:9988/udp"  # Voice relay (UDP)
+    environment:
+      NODE_ENV:          production
+      PORT:              3001
+      WS_PORT:           3002
+      VOICE_PORT:        9988
+      POSTGRES_HOST:     postgres
+      POSTGRES_USER:     ${POSTGRES_USER:-vibespeak}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB:       ${POSTGRES_DB:-vibespeak}
+      JWT_SECRET:        ${JWT_SECRET}
+      JWT_EXPIRES_IN:    7d
+      # CORS — set to your domain or * during testing
+      CORS_ORIGIN:       ${CORS_ORIGIN:-*}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - vibespeak-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout:  10s
+      start_period: 15s
+      retries: 3
+
+  # ── Coturn TURN/STUN (required for WebRTC through NAT) ──────────────────────
+  coturn:
+    image: coturn/coturn:latest
+    container_name: vibespeak-turn
+    restart: unless-stopped
+    network_mode: host          # TURN needs host networking for relay to work
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    environment:
+      # These are substituted into turnserver.conf at startup if you use
+      # envsubst — or set them directly in turnserver.conf instead.
+      COTURN_EXTERNAL_IP: ${COTURN_EXTERNAL_IP}
+      COTURN_RELAY_IP:    ${COTURN_RELAY_IP:-${COTURN_EXTERNAL_IP}}
+      COTURN_SECRET:      ${COTURN_SECRET}
+
+# ── Named volumes ──────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+
+# ── Internal network ───────────────────────────────────────────────────────────
+networks:
+  vibespeak-net:
+    driver: bridge

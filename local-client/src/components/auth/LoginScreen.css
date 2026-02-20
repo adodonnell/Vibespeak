@@ -1,0 +1,197 @@
+/* ============================================================
+   LoginScreen — VibeSpeak login / register screen
+   ============================================================ */
+
+/* Full-screen outer wrapper */
+.login-screen {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  height: 100vh;
+  width: 100vw;
+  background: #15181D;
+  overflow: hidden;
+}
+
+/* ── Centered card ── */
+.login-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 20px;
+}
+
+.login-form-wrapper {
+  width: 100%;
+  max-width: 480px;
+  background: #1E2329;
+  border-radius: 8px;
+  padding: 32px 40px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+}
+
+/* ── Header ── */
+.login-header {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.login-logo {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.login-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: #F2F3F5;
+  margin-bottom: 8px;
+  letter-spacing: -0.01em;
+}
+
+.login-subtitle {
+  font-size: 15px;
+  color: #80848E;
+  font-weight: 400;
+}
+
+/* ── Error box ── */
+.login-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(242, 63, 67, 0.08);
+  border: 1px solid rgba(242, 63, 67, 0.3);
+  border-radius: 4px;
+  color: #F23F43;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+.error-icon { font-size: 16px; }
+
+/* ── Form ── */
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.login-label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #B5BAC1;
+}
+
+.login-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: #1E1F22;
+  border: 1px solid #1E1F22;
+  border-radius: 4px;
+  color: #DBDEE1;
+  font-size: 16px;
+  font-family: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.login-input:focus {
+  outline: none;
+  border-color: #4D88FF;
+  box-shadow: 0 0 0 0 transparent;
+}
+.login-input::placeholder { color: #4D5058; }
+
+/* ── Primary action button ── */
+.login-button {
+  width: 100%;
+  padding: 13px 20px;
+  border: none;
+  border-radius: 4px;
+  background: #4D88FF;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.login-button:hover:not(:disabled) {
+  background: #3363AA;
+  box-shadow: 0 4px 16px rgba(77, 136, 255, 0.4);
+}
+.login-button:active:not(:disabled) { transform: scale(0.98); }
+.login-button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Spinner for loading state */
+.loading-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Divider ── */
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #4D5058;
+  font-size: 12px;
+  font-weight: 500;
+}
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #3A3C41;
+}
+
+/* ── Secondary toggle (Register / Login) ── */
+.login-toggle {
+  width: 100%;
+  padding: 12px 20px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  background: rgba(255,255,255,0.04);
+  color: #DBDEE1;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+.login-toggle:hover {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.15);
+}
+
+/* ── Guest hint ── */
+.login-guest-hint {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  color: #80848E;
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* ── Footer (version) ── */
+.login-footer { margin-top: 20px; text-align: center; }
+.version { font-size: 12px; color: #4D5058; }

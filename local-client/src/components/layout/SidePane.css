@@ -1,0 +1,122 @@
+/* ============================================================
+   SidePane — VibeSpeak server rail (72px wide)
+   ============================================================ */
+
+.side-pane {
+  width: 72px;
+  min-width: 72px;
+  background: #1E1F22;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 0;
+  gap: 4px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  z-index: 30;
+}
+.side-pane::-webkit-scrollbar { display: none; }
+
+/* ── Pill indicator ── */
+.server-icon-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  justify-content: center;
+}
+
+.server-pill {
+  position: absolute;
+  left: 0;
+  width: 4px;
+  border-radius: 0 4px 4px 0;
+  background: #F2F3F5;
+  transition: height 0.15s ease, opacity 0.15s ease;
+  height: 0;
+  opacity: 0;
+}
+.server-pill.unread-pill {
+  height: 8px;
+  opacity: 1;
+}
+.server-pill.active-pill {
+  height: 40px;
+  opacity: 1;
+}
+
+/* ── Server icon ── */
+.server-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #313338;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #B5BAC1;
+  font-size: 18px;
+  font-weight: 700;
+  font-family: 'gg sans', system-ui, sans-serif;
+  overflow: hidden;
+  flex-shrink: 0;
+  transition: border-radius 0.15s ease, background 0.15s ease, color 0.15s ease;
+  position: relative;
+  user-select: none;
+}
+.server-icon img { width: 100%; height: 100%; object-fit: cover; }
+.server-icon:hover { border-radius: 16px; background: #5865F2; color: #fff; }
+.server-icon.active { border-radius: 16px; background: #5865F2; color: #fff; }
+.server-icon.has-unread { background: #383A40; }
+
+/* ── Home / special icons ── */
+.server-icon.home-button { background: #313338; color: #5865F2; }
+.server-icon.home-button:hover { background: #5865F2; color: #fff; }
+.server-icon.home-button.active { background: #5865F2; color: #fff; }
+
+.server-icon.add-server { background: #313338; color: #23A559; }
+.server-icon.add-server:hover { background: #23A559; color: #fff; border-radius: 16px; }
+
+.server-icon.explore-button { background: #313338; color: #23A559; }
+.server-icon.explore-button:hover { background: #23A559; color: #fff; border-radius: 16px; }
+
+/* ── Mention badge ── */
+.server-mention-badge {
+  position: absolute;
+  bottom: 0; right: 8px;
+  background: #F23F43;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  border: 2px solid #1E1F22;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  pointer-events: none;
+}
+
+/* ── Divider ── */
+.side-pane-divider {
+  width: 32px;
+  height: 2px;
+  background: #3A3C41;
+  border-radius: 1px;
+  margin: 4px 0;
+  flex-shrink: 0;
+}
+
+/* ── Server list ── */
+.server-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.side-pane-spacer { flex: 1; min-height: 8px; }

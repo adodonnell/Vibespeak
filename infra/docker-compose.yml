@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  # Coturn TURN server for NAT traversal
+  coturn:
+    image: coturn/coturn:latest
+    container_name: vibespeak-coturn
+    ports:
+      - "3478:3478/tcp"   # TURN
+      - "3478:3478/udp"   # TURN
+      - "3479:3479/tcp"   # TURN TLS
+      - "3479:3479/udp"   # TURN TLS
+      - "49152-49172:49152-49172/udp"  # RTP ports
+    environment:
+      - LISTEN_ADDRESS=0.0.0.0
+      - RELAY_ADDRESS=${COTURN_RELAY_IP:-}
+      - EXTERNAL_IP=${COTURN_EXTERNAL_IP:-}
+      - LISTEN_PORT=3478
+      - TLS_LISTEN_PORT=3479
+      - MIN_PORT=49152
+      - MAX_PORT=49172
+      - TURNSERVER_ENABLED=1
+      - DEFAULT_REALM=vibespeak.local
+      - STATS_FILE=/var/log/turnserver/stats
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - coturn_data:/var
+    networks:
+      - vibespeak-net
+    restart: unless-stopped
+
+  # Redis for caching, sessions, and presence
+  redis:
+    image: redis:7-alpine
+    container_name: vibespeak-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - vibespeak-net
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: vibespeak-db
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-vibespeak}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-vibespeak123}
+      - POSTGRES_DB=${POSTGRES_DB:-vibespeak}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - vibespeak-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vibespeak"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  coturn_data:
+  redis_data:
+
+networks:
+  vibespeak-net:
+    driver: bridge

@@ -1,0 +1,220 @@
+/* ============================================================
+   RightDrawer — VibeSpeak member list  (240 px)
+   ============================================================ */
+
+.right-drawer {
+  width: 240px;
+  min-width: 240px;
+  height: 100vh;
+  background: #2B2D31;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+  border-left: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+/* ── Drawer header ── */
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  height: 48px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.2);
+  flex-shrink: 0;
+}
+
+.drawer-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #80848E;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.drawer-close {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #80848E;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+.drawer-close:hover { color: #DBDEE1; background: rgba(255,255,255,0.06); }
+
+/* ── Scrollable content ── */
+.drawer-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 0;
+}
+.drawer-content::-webkit-scrollbar { width: 4px; }
+.drawer-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+/* ── Member group header (ONLINE — 3) ── */
+.member-group { margin-bottom: 0; }
+
+.member-group-header {
+  display: flex;
+  align-items: center;
+  padding: 16px 8px 4px 12px;
+  user-select: none;
+}
+
+.group-toggle { display: none; }
+
+.group-name {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #80848E;
+  letter-spacing: 0.6px;
+}
+
+/* ── Member items ── */
+.member-list { padding: 0 8px; }
+
+.member-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin: 1px 0;
+  transition: background 0.15s;
+}
+.member-item:hover { background: rgba(255, 255, 255, 0.06); }
+
+.member-avatar {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  color: #fff;
+  position: relative;
+}
+
+/* Status dot on avatar */
+.member-avatar .status-indicator {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 3px solid #2B2D31;
+}
+
+.member-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.member-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #DBDEE1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+
+.member-roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 1px;
+}
+
+.role-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: #80848E;
+}
+
+/* ── Profile card view ── */
+.profile-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 16px;
+  gap: 0;
+}
+
+.profile-avatar {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 12px;
+  border: 6px solid #232428;
+}
+
+.profile-username {
+  font-size: 20px;
+  font-weight: 700;
+  color: #F2F3F5;
+  margin-bottom: 2px;
+}
+
+.profile-discriminator {
+  font-size: 13px;
+  color: #80848E;
+  margin-bottom: 16px;
+}
+
+.profile-section {
+  width: 100%;
+  background: rgba(0,0,0,0.2);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.profile-section h4 {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #80848E;
+  letter-spacing: 0.6px;
+  margin-bottom: 4px;
+}
+.profile-section p { font-size: 14px; color: #DBDEE1; }
+
+.profile-actions { display: flex; gap: 8px; width: 100%; }
+
+.profile-btn {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 4px;
+  background: #5865F2;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+.profile-btn:hover { background: #4752C4; }

@@ -1,0 +1,293 @@
+/* ===================================================
+   VIBESPEAK — Modern voice chat color system
+   =================================================== */
+:root {
+  /* ── VibeSpeak surface hierarchy ── */
+  --dc-bg-1:  #0F1216;   /* server rail (darkest) - deep background */
+  --dc-bg-2:  #1E2329;   /* channel pane / member list - surface gray */
+  --dc-bg-3:  #15181D;   /* main chat area */
+  --dc-bg-4:  #1A1E24;   /* user panel strip */
+  --dc-bg-5:  #252A31;   /* inputs / elevated cards */
+  --dc-bg-6:  #2B3139;   /* hover on inputs */
+
+  /* ── Map legacy vars to surface tones ── */
+  --background-color:   var(--dc-bg-3);
+  --pane-color:         var(--dc-bg-2);
+  --side-pane-color:    var(--dc-bg-1);
+  --bg-base:            var(--dc-bg-1);
+  --bg-primary:         var(--dc-bg-3);
+  --bg-secondary:       var(--dc-bg-2);
+  --bg-tertiary:        var(--dc-bg-4);
+  --channel-bg:         var(--dc-bg-2);
+
+  /* ── Accent / brand ── */
+  --primary-color:      #4D88FF;   /* VibeSpeak primary blue */
+  --primary-color-dark: #3363AA;   /* VibeSpeak secondary blue */
+  --accent:             #4D88FF;
+  --accent-teal:        #4D88FF;
+  --accent-blurple:     #4D88FF;
+
+  /* ── Status colours ── */
+  --status-online:  #23A559;
+  --status-idle:    #F0B232;
+  --status-dnd:     #F23F43;
+  --status-offline: #80848E;
+  --status-streaming: #593695;
+
+  /* ── Semantic colours ── */
+  --alert-color:       #F23F43;
+  --alert-color-dark:  #3e2626;
+  --warn-color:        #F0B232;
+  --warn-color-dark:   #3a3229;
+  --success-color:     #23A559;
+  --success-color-dark:#1c221d;
+  --danger:            #F23F43;
+
+  /* ── Text ── */
+  --text-color:    #E8EAED;
+  --text-normal:   #E8EAED;
+  --content-color: #B0B3B8;
+  --text-muted:    #6D7178;
+  --text-link:     #4D88FF;
+  --side-pane-text-color: #E8EAED;
+
+  /* ── Typing indicator ── */
+  --typing-indicator-color:           #DBDEE1;
+  --typing-indicator-secondary-color: #B5BAC1;
+
+  /* ── Chat input ── */
+  --chat-input-background-color:              var(--dc-bg-5);
+  --chat-input-background-color-blur-disabled: var(--dc-bg-5);
+  --chat-markup-bar-background-color:          var(--dc-bg-5);
+  --chat-markup-bar-background-color-blur-disabled: var(--dc-bg-5);
+
+  /* ── Message ── */
+  --message-hover-background-color:              rgba(4, 4, 5, 0.07);
+  --message-floating-options-background-color:   #111214;
+  --header-background-color:                     var(--dc-bg-3);
+  --header-background-color-blur-disabled:       var(--dc-bg-3);
+  --tooltip-background-color:                    #111214;
+
+  /* ── Markup ── */
+  --markup-code-background-color:          #1E2329;
+  --markup-mention-background-color:       rgba(77, 136, 255, 0.15);
+  --markup-mention-background-color-hover: rgba(77, 136, 255, 0.3);
+  --markup-codeblock-background-color:     #0F1216;
+  --markup-spoiler-background-color:       #0e0f10;
+  --markup-spoiler-background-color-hover: #1c1e20;
+
+  /* ── Drawer ── */
+  --drawer-item-background-color:       rgba(255, 255, 255, 0.05);
+  --drawer-item-hover-background-color: rgba(255, 255, 255, 0.08);
+
+  /* ── Borders / dividers ── */
+  --border-default: rgba(255, 255, 255, 0.06);
+  --border-muted:   rgba(255, 255, 255, 0.04);
+  --divider:        rgba(255, 255, 255, 0.06);
+
+  /* ── Typography ── */
+  /* Inter loaded via index.html — clean modern typeface */
+  --font-sans: 'Inter', 'Noto Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-mono: 'Consolas', 'Andale Mono WT', 'Andale Mono', 'Lucida Console', monospace;
+
+  /* ── Layout ── */
+  --omni-rail-width:   72px;
+  --channel-pane-width: 240px;
+  --telemetry-height:  40px;
+
+  /* ── Voice UI ── */
+  --voice-good:     #23A559;
+  --voice-activity: #F0B232;
+  --voice-bad:      #F23F43;
+
+  /* ── Surface variations ── */
+  --bg-surface:    #1E2329;
+  --bg-elevated:   #252A31;
+
+/* ── Transitions ── */
+  --transition-fast:   0.15s ease;
+  --transition-normal: 0.25s ease;
+  
+  /* ── Animation timings ── */
+  --animation-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --animation-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --animation-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+/* ── Global Animations ── */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
+@keyframes ripple {
+  0% { transform: scale(0); opacity: 0.5; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+/* ── Animation utility classes ── */
+.animate-fade-in { animation: fadeIn 0.2s var(--animation-smooth); }
+.animate-fade-in-up { animation: fadeInUp 0.25s var(--animation-smooth); }
+.animate-fade-in-down { animation: fadeInDown 0.25s var(--animation-smooth); }
+.animate-scale-in { animation: scaleIn 0.2s var(--animation-spring); }
+.animate-slide-in-right { animation: slideInRight 0.25s var(--animation-smooth); }
+.animate-slide-in-left { animation: slideInLeft 0.25s var(--animation-smooth); }
+.animate-pulse { animation: pulse 2s infinite; }
+.animate-shake { animation: shake 0.3s ease-in-out; }
+
+/* ── Hover transitions ── */
+.hover-lift {
+  transition: transform 0.15s var(--animation-spring);
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+}
+
+.hover-glow {
+  transition: box-shadow 0.15s ease;
+}
+.hover-glow:hover {
+  box-shadow: 0 0 20px rgba(77, 136, 255, 0.3);
+}
+
+.hover-scale {
+  transition: transform 0.15s var(--animation-spring);
+}
+.hover-scale:hover {
+  transform: scale(1.02);
+}
+
+/* ── Reset ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  width: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--dc-bg-3);
+  color: var(--text-normal);
+  overflow: hidden;
+  font-size: 16px;
+  line-height: 1.375;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* ── Focus styles ── */
+:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+/* ── Selection styles ── */
+::selection {
+  background: rgba(77, 136, 255, 0.4);
+  color: #fff;
+}
+
+/* ── Thin scrollbars ── */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { 
+  background: rgba(255,255,255,0.08); 
+  border-radius: 4px; 
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { 
+  background: rgba(255,255,255,0.14); 
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ── Button reset ── */
+button {
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* ── Input reset ── */
+input, textarea, select {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+/* ── Link styles ── */
+a {
+  color: var(--text-link);
+  text-decoration: none;
+  transition: text-decoration 0.15s ease;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* ── Image handling ── */
+img, video {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

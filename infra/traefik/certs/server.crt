@@ -1,0 +1,20 @@
+# Placeholder TLS Certificate
+# 
+# Generate a real certificate using:
+# 
+# Linux/Mac:
+# openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+#   -keyout server.key -out server.crt \
+#   -subj "/C=US/ST=State/L=City/O=VibeSpeak/CN=your-domain.com"
+#
+# Windows (with OpenSSL installed):
+# openssl req -x509 -nodes -days 365 -newkey rsa:2048 ^
+#   -keyout server.key -out server.crt ^
+#   -subj "/C=US/ST=State/L=City/O=VibeSpeak/CN=your-domain.com"
+#
+# Or use Certbot for Let's Encrypt:
+# certbot certonly --webroot -w /var/www/html -d your-domain.com
+
+# -----BEGIN CERTIFICATE-----
+# MIIDXTCCAkWgAwIBAgIJAKxxx-placeholder-xxx
+# -----END CERTIFICATE-----

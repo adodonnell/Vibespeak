@@ -1,0 +1,159 @@
+/* ============================================================
+   UserPanel — VibeSpeak bottom-left user area
+   ============================================================ */
+
+.user-panel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  height: 52px;
+  background: #1A1E24;
+  flex-shrink: 0;
+  border-top: 1px solid rgba(0,0,0,0.3);
+}
+
+/* ── Identity ── */
+.user-panel-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.user-panel-identity:hover { background: rgba(255,255,255,0.06); }
+
+.user-panel-avatar-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+.user-panel-avatar {
+  width: 32px; height: 32px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 700; color: #fff;
+}
+.user-status-dot {
+  position: absolute;
+  bottom: -2px; right: -2px;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  border: 2px solid #232428;
+}
+
+.user-panel-names {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+.user-panel-username {
+  font-size: 13px;
+  font-weight: 600;
+  color: #F2F3F5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+.user-panel-tag {
+  font-size: 11px;
+  color: #80848E;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+  text-transform: capitalize;
+}
+
+/* ── Control buttons ── */
+.user-panel-controls {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.user-ctrl-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px; height: 32px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #80848E;
+  transition: background 0.15s, color 0.15s;
+}
+.user-ctrl-btn:hover { background: rgba(255,255,255,0.08); color: #DBDEE1; }
+.user-ctrl-btn.active { color: #DBDEE1; }
+.user-ctrl-btn.danger { color: #F23F43; }
+.user-ctrl-btn.danger:hover { background: rgba(242,63,67,0.15); color: #F23F43; }
+
+/* ── Status dropdown ── */
+.user-panel-identity {
+  position: relative;
+  cursor: pointer;
+}
+
+.status-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 8px;
+  background: #111214;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  padding: 6px 8px;
+  min-width: 160px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  z-index: 100;
+  animation: status-dropdown-fade 0.15s ease;
+}
+
+@keyframes status-dropdown-fade {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.status-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s;
+  color: #DBDEE1;
+  font-size: 14px;
+  font-family: inherit;
+  text-align: left;
+}
+
+.status-option:hover {
+  background: rgba(255,255,255,0.06);
+}
+
+.status-option.active {
+  background: rgba(77, 136, 255, 0.2);
+}
+
+.status-emoji {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.status-label {
+  flex: 1;
+  font-weight: 500;
+}
+
+.status-check {
+  color: #23A559;
+  font-weight: 700;
+}

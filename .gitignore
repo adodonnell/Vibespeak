@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+dist-electron/
+build/
+out/
+
+# Environment files — NEVER commit these
+.env
+.env.local
+.env.*.local
+infra/.env
+server-brain/.env
+local-client/.env
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/settings.json
+
+# TypeScript
+*.tsbuildinfo
+
+# TypeScript compiled test files
+*.js.map
+*.d.ts.map
+server-brain/tests/*.js
+server-brain/tests/*.d.ts
+
+# Electron release artifacts
+local-client/release/
+local-client/dist-electron/
+
+# Test coverage
+coverage/
+
+# Temporary
+*.tmp
+*.swp
+
+# PowerShell artifacts
+$null

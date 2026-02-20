@@ -1,0 +1,324 @@
+/* ============================================================
+   VoiceControlPanel — TeamSpeak-inspired voice controls
+   ============================================================ */
+
+.voice-control-panel {
+  display: flex;
+  flex-direction: column;
+  background: #1e1f22;
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+  color: #dbdee1;
+  width: 100%;
+}
+
+/* ── Channel info bar ── */
+.vcp-channel-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #232428;
+  border-bottom: 1px solid rgba(0,0,0,0.3);
+}
+
+.vcp-signal-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #72767d;
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+.vcp-signal-dot.active {
+  background: #57F287;
+  box-shadow: 0 0 6px #57F287;
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}
+@keyframes dot-pulse {
+  0%,100% { box-shadow: 0 0 4px #57F287; }
+  50%      { box-shadow: 0 0 10px #57F287; }
+}
+
+.vcp-channel-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.vcp-channel-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #f2f3f5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vcp-channel-status {
+  font-size: 11px;
+  color: #a3a6aa;
+}
+
+/* ── VU Meter ── */
+.vcp-vu-meter {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 10px 14px 4px;
+  height: 36px;
+}
+
+.vcp-vu-bar {
+  flex: 1;
+  height: 100%;
+  border-radius: 2px;
+  background: #57F287;
+  opacity: 0.15;
+  transition: opacity 0.05s, background 0.05s;
+  min-width: 3px;
+}
+
+.vcp-vu-labels {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 14px 6px;
+  font-size: 9px;
+  color: #72767d;
+}
+
+/* ── PTT badge ── */
+.vcp-ptt-badge {
+  margin: 4px 14px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: rgba(88,101,242,0.15);
+  border: 1px solid rgba(88,101,242,0.3);
+  color: #a3a6aa;
+  font-size: 11px;
+  text-align: center;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.vcp-ptt-badge.active {
+  background: rgba(87,242,135,0.15);
+  border-color: rgba(87,242,135,0.4);
+  color: #57F287;
+  font-weight: 600;
+}
+
+/* ── Main controls ── */
+.vcp-controls {
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px;
+  flex-wrap: wrap;
+}
+
+.vcp-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #b5bac1;
+  cursor: pointer;
+  flex: 1;
+  min-width: 52px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  font-size: 12px;
+}
+.vcp-btn:hover {
+  background: rgba(255,255,255,0.1);
+  color: #f2f3f5;
+}
+.vcp-btn.active {
+  background: rgba(88,101,242,0.2);
+  border-color: rgba(88,101,242,0.5);
+  color: #7289da;
+}
+.vcp-btn.danger {
+  background: rgba(237,66,69,0.2);
+  border-color: rgba(237,66,69,0.4);
+  color: #ED4245;
+}
+.vcp-btn.speaking {
+  background: rgba(87,242,135,0.12);
+  border-color: rgba(87,242,135,0.4);
+  color: #57F287;
+  box-shadow: 0 0 8px rgba(87,242,135,0.25);
+}
+.vcp-btn-icon { font-size: 18px; line-height: 1; }
+.vcp-btn-label { font-size: 10px; white-space: nowrap; }
+
+.vcp-leave {
+  background: rgba(237,66,69,0.1);
+  border-color: rgba(237,66,69,0.2);
+  color: #f38ba8;
+}
+.vcp-leave:hover {
+  background: rgba(237,66,69,0.3);
+  border-color: rgba(237,66,69,0.5);
+  color: #ED4245;
+}
+
+/* ── Settings panel ── */
+.vcp-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px 14px;
+  border-top: 1px solid rgba(0,0,0,0.25);
+  max-height: 420px;
+  overflow-y: auto;
+}
+.vcp-settings::-webkit-scrollbar { width: 4px; }
+.vcp-settings::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+.vcp-settings-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #80848e;
+  margin-bottom: 4px;
+}
+
+.vcp-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #80848e;
+  margin-top: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.vcp-select {
+  width: 100%;
+  background: #1a1b1e;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  color: #dbdee1;
+  padding: 6px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.vcp-select:focus { border-color: #5865F2; }
+
+.vcp-row-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #b5bac1;
+  margin-top: 4px;
+}
+.vcp-val {
+  font-weight: 600;
+  color: #dbdee1;
+  font-size: 12px;
+}
+
+.vcp-slider {
+  width: 100%;
+  accent-color: #5865F2;
+  cursor: pointer;
+  height: 4px;
+  border-radius: 2px;
+}
+
+/* Voice mode toggle */
+.vcp-toggle-group {
+  display: flex;
+  gap: 6px;
+}
+.vcp-toggle-btn {
+  flex: 1;
+  padding: 6px 4px;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.04);
+  color: #b5bac1;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  text-align: center;
+}
+.vcp-toggle-btn:hover { background: rgba(255,255,255,0.08); color: #dbdee1; }
+.vcp-toggle-btn.active {
+  background: rgba(88,101,242,0.2);
+  border-color: #5865F2;
+  color: #7289da;
+  font-weight: 600;
+}
+
+/* PTT key binding */
+.vcp-ptt-bind {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #b5bac1;
+  flex-wrap: wrap;
+}
+.vcp-ptt-key-btn {
+  padding: 4px 10px;
+  background: rgba(88,101,242,0.15);
+  border: 1px solid rgba(88,101,242,0.4);
+  border-radius: 4px;
+  color: #7289da;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: monospace;
+  transition: background 0.15s;
+}
+.vcp-ptt-key-btn:hover { background: rgba(88,101,242,0.3); }
+.vcp-ptt-input {
+  padding: 4px 10px;
+  background: #1a1b1e;
+  border: 1px solid #5865F2;
+  border-radius: 4px;
+  color: #f2f3f5;
+  font-size: 12px;
+  outline: none;
+  font-family: monospace;
+  width: 120px;
+}
+
+/* Checkboxes */
+.vcp-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #b5bac1;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.vcp-checkbox-row input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: #5865F2;
+  cursor: pointer;
+}
+.vcp-checkbox-row label { cursor: pointer; }
+
+/* Save button */
+.vcp-save-btn {
+  margin-top: 10px;
+  padding: 9px;
+  background: #5865F2;
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  width: 100%;
+}
+.vcp-save-btn:hover { background: #4752C4; }
+.vcp-save-btn:active { transform: scale(0.98); }

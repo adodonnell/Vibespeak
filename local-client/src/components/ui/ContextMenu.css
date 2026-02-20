@@ -1,0 +1,113 @@
+/* ============================================================
+   Context Menu — VibeSpeak right-click menus
+   ============================================================ */
+
+.context-menu {
+  position: fixed;
+  z-index: 10001;
+  min-width: 180px;
+  max-width: 280px;
+  padding: 6px 8px;
+  background: #18191C;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 1px rgba(0, 0, 0, 0.3);
+  animation: contextMenuIn 0.1s ease-out;
+}
+
+@keyframes contextMenuIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.context-menu-submenu {
+  animation: contextMenuSubmenuIn 0.1s ease-out;
+}
+
+@keyframes contextMenuSubmenuIn {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  margin: 2px 0;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #DBDEE1;
+  transition: background 0.1s, color 0.1s;
+}
+
+.context-menu-item:hover:not(.disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.context-menu-item.danger {
+  color: #F23F43;
+}
+
+.context-menu-item.danger:hover {
+  background: rgba(242, 63, 67, 0.15);
+}
+
+.context-menu-item.disabled {
+  color: #80848E;
+  cursor: not-allowed;
+}
+
+.context-menu-item-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: inherit;
+}
+
+.context-menu-item-label {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.context-menu-item-shortcut {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #80848E;
+  font-weight: 400;
+}
+
+.context-menu-item-arrow {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: #80848E;
+}
+
+.context-menu-item.has-submenu:hover .context-menu-item-arrow {
+  color: #DBDEE1;
+}
+
+.context-menu-divider {
+  height: 1px;
+  margin: 4px 8px;
+  background: rgba(255, 255, 255, 0.08);
+}

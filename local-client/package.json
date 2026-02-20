@@ -1,0 +1,43 @@
+{
+  "name": "local-client",
+  "version": "1.0.0",
+  "private": true,
+  "author": "VibeSpeak Team",
+  "description": "VibeSpeak Desktop Client - Electron + React",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "preview": "vite preview",
+    "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:build": "pnpm run build && pnpm run build:electron && electron-builder --config electron-builder.yml --publish never",
+    "electron:build:win": "pnpm run build && pnpm run build:electron && electron-builder --config electron-builder.yml --win --publish never",
+    "electron:build:linux": "pnpm run build && pnpm run build:electron && electron-builder --config electron-builder.yml --linux --publish never",
+    "electron:build:mac": "pnpm run build && pnpm run build:electron && electron-builder --config electron-builder.yml --mac --publish never",
+    "electron:build:all": "pnpm run build && pnpm run build:electron && electron-builder --config electron-builder.yml --win --linux --publish never"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.13.18",
+    "emoji-picker-react": "^4.9.2",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-markdown": "^9.0.1",
+    "react-syntax-highlighter": "^15.5.0",
+    "rehype-raw": "^7.0.0",
+    "remark-gfm": "^4.0.0",
+    "zustand": "^5.0.11"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
+    "@types/react-syntax-highlighter": "^15.5.11",
+    "@vitejs/plugin-react": "^4.2.1",
+    "concurrently": "^8.2.2",
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.10",
+    "wait-on": "^7.2.0"
+  }
+}

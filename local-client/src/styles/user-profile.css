@@ -1,0 +1,258 @@
+/* User Profile Modal */
+.user-profile-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  backdrop-filter: blur(4px);
+}
+
+.user-profile {
+  width: 100%;
+  max-width: 380px;
+  background: var(--pane-color, #2b2d31);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.user-profile-header {
+  position: relative;
+}
+
+.user-profile-banner {
+  height: 120px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.user-profile-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: rgba(0, 0, 0, 0.5);
+  color: white;
+  border-radius: 50%;
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.user-profile-close:hover {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.user-profile-content {
+  padding: 0 24px 24px;
+}
+
+.user-profile-avatar-section {
+  margin-top: -50px;
+  margin-bottom: 16px;
+}
+
+.user-profile-avatar {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  border: 6px solid var(--pane-color, #2b2d31);
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+  font-weight: bold;
+  color: white;
+  background-size: cover;
+  background-position: center;
+  position: relative;
+}
+
+.user-profile-avatar.editable {
+  cursor: pointer;
+}
+
+.user-profile-avatar.editable:hover .avatar-edit-icon {
+  opacity: 1;
+}
+
+.avatar-edit-icon {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 28px;
+  height: 28px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.user-profile-info {
+  margin-bottom: 20px;
+}
+
+.user-profile-username {
+  font-size: 24px;
+  font-weight: bold;
+  color: var(--text-color, white);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.user-badge {
+  font-size: 16px;
+}
+
+.user-profile-roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.user-role {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.user-profile-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text-color, white);
+  margin-bottom: 8px;
+}
+
+.user-profile-status .status-emoji {
+  color: var(--status-online, #78e380);
+}
+
+.user-profile-bio {
+  font-size: 14px;
+  color: var(--text-muted, rgba(255, 255, 255, 0.7));
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.user-profile-edit-btn {
+  padding: 8px 16px;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 6px;
+  color: var(--text-color, white);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.user-profile-edit-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.user-profile-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.edit-field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted, rgba(255, 255, 255, 0.5));
+}
+
+.edit-field input,
+.edit-field textarea {
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: var(--text-color, white);
+  font-size: 14px;
+}
+
+.edit-field input:focus,
+.edit-field textarea:focus {
+  outline: none;
+  border-color: var(--primary-color, #4c93ff);
+}
+
+.edit-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.edit-actions .btn-cancel,
+.edit-actions .btn-save {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.edit-actions .btn-cancel {
+  background: transparent;
+  color: var(--text-muted, rgba(255, 255, 255, 0.7));
+}
+
+.edit-actions .btn-cancel:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.edit-actions .btn-save {
+  background: var(--primary-color, #4c93ff);
+  color: white;
+}
+
+.edit-actions .btn-save:hover {
+  opacity: 0.9;
+}
+
+.user-profile-details {
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.detail-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.detail-label {
+  color: var(--text-muted, rgba(255, 255, 255, 0.5));
+}
+
+.detail-value {
+  color: var(--text-color, white);
+}
