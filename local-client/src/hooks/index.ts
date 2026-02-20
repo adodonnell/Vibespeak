@@ -5,5 +5,5 @@ export {
   useTotalMentions, 
   useServerUnreads 
 } from './useUnreadStore';
-export { useKeyboardShortcuts, formatShortcut, DISCORD_SHORTCUTS } from './useKeyboardShortcuts';
+export { useKeyboardShortcuts, formatShortcut, VIBESPEAK_SHORTCUTS } from './useKeyboardShortcuts';
 export type { KeyboardShortcut } from './useKeyboardShortcuts';
