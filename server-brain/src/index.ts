@@ -51,8 +51,9 @@ const WS_PORT = parseInt(process.env.WS_PORT || '3002');
 
 // CORS configuration - restrict in production
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS 
-  ? process.env.ALLOWED_ORIGINS.split(',') 
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
   : ['http://localhost:5173', 'http://localhost:3000'];
+const ALLOW_ALL_ORIGINS = ALLOWED_ORIGINS.includes('*');
 const isProduction = process.env.NODE_ENV === 'production';
 
 // Security headers applied to every response
@@ -130,18 +131,24 @@ async function main() {
   };
 
   const server = http.createServer(async (req, res) => {
-    // CORS: Restrict in production
+    // CORS: Allow all origins if * is in ALLOWED_ORIGINS
     const origin = req.headers.origin;
-    if (isProduction && origin && !ALLOWED_ORIGINS.includes(origin)) {
+    
+    // If allowing all origins, use wildcard (but can't use wildcard with credentials)
+    if (ALLOW_ALL_ORIGINS) {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+    } else if (isProduction && origin && !ALLOWED_ORIGINS.includes(origin)) {
+      // In production with specific origins, reject unknown origins
       res.writeHead(403);
       res.end(JSON.stringify({ error: 'Forbidden - origin not allowed' }));
       return;
+    } else {
+      // Echo specific origin - wildcard + credentials is rejected by browsers
+      const allowedOrigin = isProduction
+        ? (origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0])
+        : (origin || ALLOWED_ORIGINS[0]);
+      res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
     }
-    // Echo specific origin even in dev — wildcard + credentials is rejected by browsers
-    const allowedOrigin = isProduction
-      ? (origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0])
-      : (origin || ALLOWED_ORIGINS[0]);
-    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     res.setHeader('Access-Control-Allow-Credentials', 'true');

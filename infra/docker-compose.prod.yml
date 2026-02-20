@@ -40,6 +40,7 @@ services:
       - "3001:3001"      # HTTP API
       - "3002:3002"      # WebSocket signaling
       - "9988:9988/udp"  # Voice relay (UDP)
+      - "9988:9988/udp"  # Voice relay (UDP) - must be exposed for direct UDP
     environment:
       NODE_ENV:          production
       PORT:              3001
@@ -51,8 +52,8 @@ services:
       POSTGRES_DB:       ${POSTGRES_DB:-vibespeak}
       JWT_SECRET:        ${JWT_SECRET}
       JWT_EXPIRES_IN:    7d
-      # CORS — set to your domain or * during testing
-      CORS_ORIGIN:       ${CORS_ORIGIN:-*}
+      # CORS — set to your domain or * during testing (comma-separated for multiple)
+      ALLOWED_ORIGINS:   ${ALLOWED_ORIGINS:-*}
     depends_on:
       postgres:
         condition: service_healthy
