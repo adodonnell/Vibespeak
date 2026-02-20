@@ -36,11 +36,10 @@ services:
       dockerfile: Dockerfile
     container_name: vibespeak-server
     restart: unless-stopped
-    expose:
-      - "3001"           # HTTP API (internal only - proxied by Nginx)
-      - "3002"           # WebSocket signaling (internal only - proxied by Nginx)
     ports:
-      - "9988:9988/udp"  # Voice relay (UDP) - must be exposed for direct UDP
+      - "3001:3001"      # HTTP API
+      - "3002:3002"      # WebSocket signaling
+      - "9988:9988/udp"  # Voice relay (UDP)
     environment:
       NODE_ENV:          production
       PORT:              3001
