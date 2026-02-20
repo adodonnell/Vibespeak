@@ -14,6 +14,30 @@ Complete guide to deploy VibeSpeak on a Virtual Private Server (VPS).
 
 ---
 
+## 🔌 Port Summary (Minimal Setup)
+
+Only **7 firewall rules** needed:
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| **22** | TCP | SSH |
+| **80** | TCP | HTTP (SSL challenges only) |
+| **443** | TCP | HTTPS (API + WebSocket combined) |
+| **3478** | TCP+UDP | TURN/STUN (WebRTC NAT traversal) |
+| **9988** | UDP | Voice relay |
+| **49152-49172** | UDP | TURN relay (only 20 ports) |
+
+**Architecture:**
+```
+Internet → Nginx (443) → Server Brain (3001/3002 internal only)
+                      ↓
+                   TURN (3478) + Voice Relay (9988)
+```
+
+All API and WebSocket traffic goes through **port 443** — Nginx routes `/ws` to the WebSocket server internally.
+
+---
+
 ## 🚀 Quick Start (5 Minutes)
 
 ```bash
@@ -122,23 +146,36 @@ sudo ufw allow 22/tcp
 sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
 
-# VibeSpeak services
-sudo ufw allow 3001/tcp  # HTTP API
-sudo ufw allow 3002/tcp  # WebSocket
-sudo ufw allow 9988/udp  # Voice relay
-
 # TURN/STUN (for WebRTC)
 sudo ufw allow 3478/tcp
 sudo ufw allow 3478/udp
-sudo ufw allow 5349/tcp  # TURN TLS
-sudo ufw allow 49152:65535/udp  # TURN relay ports
+
+# Voice relay
+sudo ufw allow 9988/udp
+
+# TURN relay ports (minimal range)
+sudo ufw allow 49152:49172/udp
 
 # Enable firewall
 sudo ufw --force enable
 sudo ufw status
 ```
 
-### Step 5: Start Services
+### Step 5: Oracle Cloud Security List (If using Oracle)
+
+In Oracle Cloud Console → Instance → Security Lists → Add Ingress Rules:
+
+| Source | Protocol | Dest Port |
+|--------|----------|-----------|
+| 0.0.0.0/0 | TCP | 22 |
+| 0.0.0.0/0 | TCP | 80 |
+| 0.0.0.0/0 | TCP | 443 |
+| 0.0.0.0/0 | TCP | 3478 |
+| 0.0.0.0/0 | UDP | 3478 |
+| 0.0.0.0/0 | UDP | 9988 |
+| 0.0.0.0/0 | UDP | 49152-49172 |
+
+### Step 6: Start Services
 
 ```bash
 # Start all services
