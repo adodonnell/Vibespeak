@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install ALL deps (devDeps needed for tsc)
-RUN npm ci
+RUN npm install --legacy-peer-deps
 
 # Copy source and compile
 COPY . .
