@@ -30,6 +30,9 @@ COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nodejs:nodejs /app/dist          ./dist
 COPY --from=builder --chown=nodejs:nodejs /app/package.json  ./package.json
 
+# Create logs directory with proper permissions
+RUN mkdir -p /app/logs && chown nodejs:nodejs /app/logs
+
 USER nodejs
 
 # HTTP API, WebSocket signaling, Voice relay (UDP)
