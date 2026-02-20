@@ -43,14 +43,18 @@ const ServerSetupScreen: React.FC<ServerSetupScreenProps> = ({ onConnected }) =>
   const getApiUrl = () => {
     const h = host.trim() || 'localhost';
     const p = port.trim() || '3001';
-    const protocol = (h !== 'localhost' && !h.startsWith('192.168.') && !h.startsWith('10.')) ? 'https' : 'http';
+    // Use http for all IPs (for development/testing)
+    // For production, set up HTTPS on the server
+    const protocol = 'http';
     return `${protocol}://${h}:${p}`;
   };
 
   const getWsUrl = () => {
     const h = host.trim() || 'localhost';
     const p = wsPort.trim() || '3002';
-    const protocol = (h !== 'localhost' && !h.startsWith('192.168.') && !h.startsWith('10.')) ? 'wss' : 'ws';
+    // Use ws for all IPs (for development/testing)
+    // For production, set up WSS on the server
+    const protocol = 'ws';
     return `${protocol}://${h}:${p}`;
   };
 
