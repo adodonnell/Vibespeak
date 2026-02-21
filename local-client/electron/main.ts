@@ -208,8 +208,26 @@ app.whenReady().then(() => {
   // IPC: renderer asks for a list of capturable sources (so it can show a picker)
   ipcMain.handle('get-screen-sources', async () => {
     try {
-      return await desktopCapturer.getSources({ types: ['screen', 'window'] });
-    } catch {
+      const sources = await desktopCapturer.getSources({ 
+        types: ['screen', 'window'],
+        thumbnailSize: { width: 320, height: 180 } // Consistent thumbnail size
+      });
+      
+      // Deduplicate by name and type (some systems report duplicates)
+      const seen = new Set<string>();
+      const deduped = sources.filter(source => {
+        const key = `${source.name}-${source.display_id || source.id}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      
+      console.log('[Electron] getScreenSources:', deduped.length, 'sources');
+      deduped.forEach(s => console.log(`  - [${s.id.slice(0, 8)}] ${s.name}`));
+      
+      return deduped;
+    } catch (err) {
+      console.error('[Electron] getScreenSources error:', err);
       return [];
     }
   });

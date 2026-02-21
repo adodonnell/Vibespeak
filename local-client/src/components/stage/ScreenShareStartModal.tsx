@@ -59,16 +59,38 @@ const ScreenShareStartModal: React.FC<Props> = ({
       setIsLoadingSources(true);
       (window as any).electronAPI.getScreenSources()
         .then((srcs: Array<{ id: string; name: string; thumbnail: { toDataURL: () => string } }>) => {
+          console.log('[ScreenShare] Received', srcs.length, 'sources from Electron');
+          
+          // Deduplicate by ID (Electron sometimes returns duplicates)
+          const uniqueMap = new Map<string, { id: string; name: string; thumbnail: { toDataURL: () => string } }>();
+          srcs.forEach(s => {
+            if (!uniqueMap.has(s.id)) {
+              uniqueMap.set(s.id, s);
+            }
+          });
+          
+          const uniqueSrcs = Array.from(uniqueMap.values());
+          console.log('[ScreenShare] After dedup:', uniqueSrcs.length, 'unique sources');
+          
           // Categorize sources by type
-          const processedSources: ScreenSource[] = srcs.map(s => ({
-            id: s.id,
-            name: s.name,
-            thumbnail: s.thumbnail.toDataURL(),
-            // In Electron, screen sources typically have "Screen" or "Entire Screen" in name
-            type: s.name.toLowerCase().includes('screen') || s.name.toLowerCase().includes('entire') 
-              ? 'screen' 
-              : 'window',
-          }));
+          const processedSources: ScreenSource[] = uniqueSrcs.map(s => {
+            // Determine type based on name patterns
+            const nameLower = s.name.toLowerCase();
+            const isScreen = nameLower.includes('screen') || 
+                             nameLower.includes('entire') || 
+                             nameLower.includes('monitor') ||
+                             nameLower.includes('display');
+            
+            console.log(`[ScreenShare] Source: "${s.name}" -> ${isScreen ? 'screen' : 'window'}`);
+            
+            return {
+              id: s.id,
+              name: s.name,
+              thumbnail: s.thumbnail.toDataURL(),
+              type: isScreen ? 'screen' : 'window',
+            };
+          });
+          
           setSources(processedSources);
         })
         .catch(console.error)
