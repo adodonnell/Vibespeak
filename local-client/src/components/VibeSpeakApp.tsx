@@ -13,7 +13,6 @@ import { SearchModal } from './SearchModal';
 import { ServerDiscovery } from './ServerDiscovery';
 import MFASetup from './MFASetup';
 import PasswordReset from './PasswordReset';
-import ModerationPanel from './ModerationPanel';
 import PresenceIndicator, { StatusSelector } from './PresenceIndicator';
 import { useReadReceipts } from './ReadReceipts';
 
@@ -21,6 +20,7 @@ interface Server {
   id: number;
   name: string;
   icon?: string;
+  owner_id?: number;
 }
 
 const VibeSpeakAppContent: React.FC = () => {
@@ -56,6 +56,7 @@ const VibeSpeakAppContent: React.FC = () => {
   const [voiceChannels, setVoiceChannels] = useState<any[]>([]);
   const [currentVoiceChannelName, setCurrentVoiceChannelName] = useState<string | undefined>(undefined);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [currentUserStatus, setCurrentUserStatus] = useState<'online' | 'idle' | 'dnd' | 'offline'>('online');
   
   // Refs to track current voice state for handlers (avoids stale closures)
   const isInVoiceRef = useRef(isInVoice);
@@ -76,8 +77,6 @@ const VibeSpeakAppContent: React.FC = () => {
   const [serverDiscoveryOpen, setServerDiscoveryOpen] = useState(false);
   const [mfaOpen, setMfaOpen] = useState(false);
   const [passwordResetOpen, setPasswordResetOpen] = useState(false);
-  const [moderationOpen, setModerationOpen] = useState(false);
-  const [showStatusSelector, setShowStatusSelector] = useState(false);
 
   // Create-server modal (replaces prompt() — not supported in Electron)
   const [createServerOpen, setCreateServerOpen] = useState(false);
@@ -620,6 +619,42 @@ const VibeSpeakAppContent: React.FC = () => {
     setSelectedMember(member); setRightDrawerMode('profile'); setRightDrawerOpen(true);
   }, []);
 
+  // Moderation handlers
+  const handleKickUser = useCallback(async (member: Member) => {
+    if (!activeServerId) return;
+    try {
+      await apiClient.kickUser(activeServerId, member.id);
+      // Refresh members list
+      const data = await apiClient.getMembers(activeServerId);
+      setMembers(data.map((m: any) => ({ id: m.id, username: m.username, status: m.status || 'offline', roles: m.roles || [] })));
+    } catch (err) { console.error('Failed to kick user:', err); }
+  }, [activeServerId]);
+
+  const handleBanUser = useCallback(async (member: Member) => {
+    if (!activeServerId) return;
+    try {
+      await apiClient.banUser(activeServerId, member.id);
+      // Refresh members list
+      const data = await apiClient.getMembers(activeServerId);
+      setMembers(data.map((m: any) => ({ id: m.id, username: m.username, status: m.status || 'offline', roles: m.roles || [] })));
+    } catch (err) { console.error('Failed to ban user:', err); }
+  }, [activeServerId]);
+
+  const handleMuteUser = useCallback(async (member: Member, durationMinutes?: number) => {
+    if (!activeServerId) return;
+    try {
+      await apiClient.muteUser(activeServerId, member.id, undefined, durationMinutes);
+    } catch (err) { console.error('Failed to mute user:', err); }
+  }, [activeServerId]);
+
+  // Status change handler
+  const handleStatusChange = useCallback(async (newStatus: 'online' | 'idle' | 'dnd' | 'offline') => {
+    setCurrentUserStatus(newStatus);
+    try {
+      await apiClient.updatePresence(newStatus);
+    } catch (err) { console.error('Failed to update status:', err); }
+  }, []);
+
   // ── Derived values ─────────────────────────────────────────────────────────
   const currentServer = servers.find(s => s.id === activeServerId);
   const serverName = currentServer?.name || 'Select a Server';
@@ -674,12 +709,13 @@ const VibeSpeakAppContent: React.FC = () => {
         currentUserVoiceChannel={currentVoiceChannelName}
         currentUsername={user.username}
         currentUserAvatarUrl={avatarUrl || undefined}
-        currentUserStatus="online"
+        currentUserStatus={currentUserStatus}
         isMuted={isMuted}
         isDeafened={isDeafened}
         onMuteToggle={handleToggleMute}
         onDeafenToggle={handleToggleDeafen}
         onUserSettingsClick={() => setSettingsOpen(true)}
+        onStatusChange={handleStatusChange}
       />
 
       <MainPane
@@ -724,6 +760,12 @@ const VibeSpeakAppContent: React.FC = () => {
         selectedMember={selectedMember}
         onClose={() => setRightDrawerOpen(false)}
         onMemberClick={handleMemberClick}
+        serverId={activeServerId ?? undefined}
+        currentUserId={user?.id}
+        isServerOwner={currentServer?.owner_id === user?.id}
+        onKickUser={handleKickUser}
+        onBanUser={handleBanUser}
+        onMuteUser={handleMuteUser}
       />
 
       <style>{`
@@ -749,7 +791,6 @@ const VibeSpeakAppContent: React.FC = () => {
           onAvatarChange={setAvatarUrl}
           onOpenMFA={() => { setSettingsOpen(false); setMfaOpen(true); }}
           onOpenPasswordReset={() => { setSettingsOpen(false); setPasswordResetOpen(true); }}
-          onOpenModeration={() => { setSettingsOpen(false); setModerationOpen(true); }}
         />
       )}
 
@@ -771,7 +812,6 @@ const VibeSpeakAppContent: React.FC = () => {
 
       {mfaOpen && <MFASetup onComplete={() => setMfaOpen(false)} onCancel={() => setMfaOpen(false)} />}
       {passwordResetOpen && <PasswordReset onComplete={() => setPasswordResetOpen(false)} onCancel={() => setPasswordResetOpen(false)} />}
-      {moderationOpen && activeServerId && <ModerationPanel serverId={activeServerId} onClose={() => setModerationOpen(false)} />}
 
       {/* Create Server modal — replaces prompt() for Electron compatibility */}
       {createServerOpen && (

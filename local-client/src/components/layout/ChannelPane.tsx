@@ -50,6 +50,7 @@ interface ChannelPaneProps {
   onMuteToggle?: () => void;
   onDeafenToggle?: () => void;
   onUserSettingsClick?: () => void;
+  onStatusChange?: (status: 'online' | 'idle' | 'dnd' | 'offline') => void;
 }
 
 function getAvatarColor(name: string): string {
@@ -78,6 +79,7 @@ const ChannelPane: React.FC<ChannelPaneProps> = ({
   onMuteToggle,
   onDeafenToggle,
   onUserSettingsClick,
+  onStatusChange,
 }) => {
   const [showCreateMenu, setShowCreateMenu] = useState(false);
 
@@ -237,6 +239,7 @@ const ChannelPane: React.FC<ChannelPaneProps> = ({
           onToggleMute={onMuteToggle}
           onToggleDeafen={onDeafenToggle}
           onOpenSettings={onUserSettingsClick}
+          onStatusChange={onStatusChange}
         />
       )}
     </div>
