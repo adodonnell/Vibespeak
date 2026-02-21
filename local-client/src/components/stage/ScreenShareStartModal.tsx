@@ -1,6 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 export type ScreenShareQuality = '1080p60' | '1080p30' | '720p60' | '720p30' | '480p30';
+
+export interface ScreenSource {
+  id: string;
+  name: string;
+  thumbnail: string;
+}
 
 interface QualityOption {
   value: ScreenShareQuality;
@@ -34,8 +40,45 @@ const ScreenShareStartModal: React.FC<Props> = ({
   onCancel,
 }) => {
   const [selected, setSelected] = useState<ScreenShareQuality>(defaultQuality);
+  const [sources, setSources] = useState<ScreenSource[]>([]);
+  const [selectedSource, setSelectedSource] = useState<string | null>(null);
+  const [isLoadingSources, setIsLoadingSources] = useState(false);
+
+  // Check if running in Electron
+  const isElectron = typeof window !== 'undefined' && 
+    typeof (window as any).electronAPI?.getScreenSources === 'function';
+
+  // Load screen sources when modal opens (Electron only)
+  useEffect(() => {
+    if (isOpen && isElectron) {
+      setIsLoadingSources(true);
+      (window as any).electronAPI.getScreenSources()
+        .then((srcs: Array<{ id: string; name: string; thumbnail: { toDataURL: () => string } }>) => {
+          setSources(srcs.map(s => ({
+            id: s.id,
+            name: s.name,
+            thumbnail: s.thumbnail.toDataURL(),
+          })));
+          // Auto-select first source
+          if (srcs.length > 0) {
+            setSelectedSource(srcs[0].id);
+          }
+        })
+        .catch(console.error)
+        .finally(() => setIsLoadingSources(false));
+    }
+  }, [isOpen, isElectron]);
 
   if (!isOpen) return null;
+
+  const handleStart = () => {
+    // In Electron, we need to tell the main process which source to use
+    if (isElectron && selectedSource) {
+      // Store the selected source ID so the main process can use it
+      sessionStorage.setItem('vibespeak:screen-source', selectedSource);
+    }
+    onStart(selected);
+  };
 
   return (
     <div
@@ -169,6 +212,80 @@ const ScreenShareStartModal: React.FC<Props> = ({
             ℹ️ Your browser will prompt you to choose a screen, window, or tab after clicking Go Live.
           </p>
         </div>
+
+        {/* Screen/Window source picker (Electron only) */}
+        {isElectron && (
+          <div style={{ padding: '0 24px 16px' }}>
+            <p style={{
+              color: '#b5bac1',
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: '.06em',
+              textTransform: 'uppercase',
+              marginBottom: 10,
+            }}>
+              Select Source
+            </p>
+            
+            {isLoadingSources ? (
+              <div style={{ textAlign: 'center', padding: 20, color: '#72767d' }}>
+                Loading sources...
+              </div>
+            ) : sources.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 20, color: '#72767d' }}>
+                No screen sources available. Make sure screen recording permissions are granted.
+              </div>
+            ) : (
+              <div style={{ 
+                display: 'grid', 
+                gridTemplateColumns: 'repeat(2, 1fr)', 
+                gap: 8,
+                maxHeight: 200,
+                overflowY: 'auto',
+              }}>
+                {sources.map(source => (
+                  <button
+                    key={source.id}
+                    onClick={() => setSelectedSource(source.id)}
+                    style={{
+                      padding: 8,
+                      background: selectedSource === source.id ? 'rgba(88,101,242,0.15)' : '#2b2d31',
+                      border: `2px solid ${selectedSource === source.id ? '#5865f2' : 'transparent'}`,
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                    }}
+                  >
+                    <img 
+                      src={source.thumbnail} 
+                      alt={source.name}
+                      style={{ 
+                        width: '100%', 
+                        height: 60, 
+                        objectFit: 'cover', 
+                        borderRadius: 4,
+                        background: '#1e1f22',
+                      }}
+                    />
+                    <span style={{ 
+                      color: '#dbdee1', 
+                      fontSize: 11, 
+                      fontWeight: 500,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {source.name}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Footer */}
         <div style={{

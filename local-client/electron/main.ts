@@ -160,14 +160,41 @@ function handleDeepLink(url: string) {
 app.whenReady().then(() => {
   // ── Screen capture (Electron 20+) ────────────────────────────────────────
   // Without this handler getDisplayMedia throws "DOMException: Not supported".
-  // We grab the first whole-screen source automatically; a full picker could be
-  // added here by sending sources to the renderer and awaiting a reply.
+  // The renderer can call getScreenSources() to show a picker UI, then store
+  // the selected source ID in sessionStorage. We use that ID here.
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     try {
       const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
-      // Prefer the first full-screen source; fall back to whatever is available
-      const screen = sources.find(s => s.name === 'Entire Screen' || s.name === 'Screen 1') || sources[0];
+      
+      // Check if renderer specified a source ID via sessionStorage
+      // Execute JavaScript in the main window to read the value
+      let selectedSourceId: string | null = null;
+      if (mainWindow) {
+        try {
+          selectedSourceId = await mainWindow.webContents.executeJavaScript(
+            `sessionStorage.getItem('vibespeak:screen-source')`
+          );
+          // Clear it after reading so it doesn't persist
+          await mainWindow.webContents.executeJavaScript(
+            `sessionStorage.removeItem('vibespeak:screen-source')`
+          );
+        } catch (e) {
+          console.log('[Electron] Could not read selected source from renderer');
+        }
+      }
+      
+      // Find the selected source, or fall back to first screen
+      let screen = selectedSourceId 
+        ? sources.find(s => s.id === selectedSourceId)
+        : null;
+      
+      // If no matching source found, prefer "Entire Screen" or first screen
+      if (!screen) {
+        screen = sources.find(s => s.name === 'Entire Screen' || s.name === 'Screen 1') || sources[0];
+      }
+      
       if (screen) {
+        console.log('[Electron] Sharing screen:', screen.name);
         callback({ video: screen, audio: 'loopback' });
       } else {
         callback({} as any); // nothing to share
