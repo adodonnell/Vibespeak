@@ -9,6 +9,7 @@ export interface ChatMessage {
   timestamp: number;
   edited_at?: number;
   reactions?: { emoji: string; count: number }[];
+  isAdmin?: boolean;
 }
 
 interface ChatStreamProps {
@@ -228,6 +229,7 @@ const ChatStream: React.FC<ChatStreamProps> = ({
                 {formatTime(message.timestamp)}
               </span>
               <span className="message-dense-author" style={{ color: isOwnMessage ? 'var(--accent-teal)' : 'var(--accent-blurple)', fontWeight: 600 }}>
+                {message.isAdmin && <span style={{ marginRight: '4px', fontSize: '11px' }} title="Admin">🛡️</span>}
                 {message.sender}
               </span>
             </div>
@@ -321,7 +323,10 @@ const ChatStream: React.FC<ChatStreamProps> = ({
         </div>
         <div className="message-body">
           <div className="message-meta">
-            <span className="message-author">{message.sender}</span>
+            <span className="message-author">
+              {message.isAdmin && <span style={{ marginRight: '4px', fontSize: '12px' }} title="Admin">🛡️</span>}
+              {message.sender}
+            </span>
             <span className="message-time">{formatTime(message.timestamp)}</span>
             {message.edited_at && (
               <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontStyle: 'italic' }}>(edited)</span>

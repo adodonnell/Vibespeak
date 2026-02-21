@@ -48,13 +48,18 @@ export class SignalingServer {
     logger.info(`WebSocket signaling server running on port ${port}`);
     
     // Reset all users to offline on startup (they'll reconnect and go online)
+    // Only do this if database is available
     (async () => {
       try {
-        const { query } = await import('./db/database.js');
-        await query("UPDATE users SET status = 'offline'");
-        logger.info('Reset all user statuses to offline');
+        const { isDbAvailable, query } = await import('./db/database.js');
+        if (isDbAvailable()) {
+          await query("UPDATE users SET status = 'offline'");
+          logger.info('Reset all user statuses to offline');
+        } else {
+          logger.info('Database not available - skipping user status reset');
+        }
       } catch (err) {
-        logger.error('Failed to reset user statuses:', err);
+        logger.warn('Could not reset user statuses (database may not be available)');
       }
     })();
 
@@ -178,9 +183,14 @@ export class SignalingServer {
           this.clientUsernames.set(ws, message.username);
           logger.info(`User "${message.username}" connecting as ${clientId}`);
           
-          // Look up user in database and set online
+          // Look up user in database and set online (only if DB is available)
           (async () => {
             try {
+              const { isDbAvailable } = await import('./db/database.js');
+              if (!isDbAvailable()) {
+                logger.debug('Database not available - skipping user online status update');
+                return;
+              }
               const user = await userService.getUserByUsername(message.username!);
               if (user) {
                 this.clientUserIds.set(ws, user.id);
@@ -188,7 +198,7 @@ export class SignalingServer {
                 logger.debug(`User ${user.id} (${message.username}) set to online`);
               }
             } catch (err) {
-              logger.error('Failed to set user online:', err);
+              logger.warn('Could not update user online status (database may not be available)');
             }
           })();
         }
@@ -380,16 +390,21 @@ export class SignalingServer {
     // Stop heartbeat for this connection
     this.stopHeartbeat(ws);
     
-    // Set user offline in database before cleanup
+    // Set user offline in database before cleanup (only if DB is available)
     const userId = this.clientUserIds.get(ws);
     const username = this.clientUsernames.get(ws);
     if (userId) {
       (async () => {
         try {
+          const { isDbAvailable } = await import('./db/database.js');
+          if (!isDbAvailable()) {
+            logger.debug('Database not available - skipping user offline status update');
+            return;
+          }
           await userService.updateStatus(userId, 'offline');
           logger.debug(`User ${userId} (${username}) set to offline`);
         } catch (err) {
-          logger.error('Failed to set user offline:', err);
+          logger.warn('Could not update user offline status (database may not be available)');
         }
       })();
     }

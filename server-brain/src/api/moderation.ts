@@ -31,6 +31,22 @@ export interface KickWithUser extends ServerKick {
   kicked_by_username: string | null;
 }
 
+export interface ServerMute {
+  id: number;
+  server_id: number;
+  user_id: number;
+  muted_by: number | null;
+  reason: string | null;
+  expires_at: Date | null;
+  created_at: Date;
+}
+
+export interface MuteWithUser extends ServerMute {
+  username: string;
+  display_name: string | null;
+  muted_by_username: string | null;
+}
+
 class ModerationService {
   // Ban a user from a server
   async banUser(serverId: number, userId: number, bannedBy: number, reason?: string): Promise<ServerBan> {
@@ -51,6 +67,13 @@ class ModerationService {
     await query(
       'DELETE FROM server_members WHERE server_id = $1 AND user_id = $2',
       [serverId, userId]
+    );
+
+    // Log to audit
+    await query(
+      `INSERT INTO audit_logs (server_id, user_id, action, target_user_id, reason)
+       VALUES ($1, $2, 'ban', $3, $4)`,
+      [serverId, bannedBy, userId, reason || null]
     );
 
     logger.info(`User ${userId} banned from server ${serverId} by ${bannedBy}`);
@@ -118,6 +141,13 @@ class ModerationService {
     await query(
       'DELETE FROM server_members WHERE server_id = $1 AND user_id = $2',
       [serverId, userId]
+    );
+
+    // Log to audit
+    await query(
+      `INSERT INTO audit_logs (server_id, user_id, action, target_user_id, reason)
+       VALUES ($1, $2, 'kick', $3, $4)`,
+      [serverId, kickedBy, userId, reason || null]
     );
 
     logger.info(`User ${userId} kicked from server ${serverId} by ${kickedBy}`);
@@ -191,6 +221,108 @@ class ModerationService {
     
     logger.info(`Bulk banned ${banned} users from server ${serverId}`);
     return banned;
+  }
+
+  // Mute a user in a server
+  async muteUser(serverId: number, userId: number, mutedBy: number, reason?: string, durationMinutes?: number): Promise<ServerMute> {
+    // Calculate expiration time if duration provided
+    let expiresAt: Date | null = null;
+    if (durationMinutes && durationMinutes > 0) {
+      expiresAt = new Date(Date.now() + durationMinutes * 60 * 1000);
+    }
+
+    // Check if already muted
+    const existing = await this.getMute(serverId, userId);
+    if (existing) {
+      // Update existing mute
+      const result = await query(
+        `UPDATE server_mutes SET reason = $1, expires_at = $2, muted_by = $3, created_at = NOW()
+         WHERE server_id = $4 AND user_id = $5
+         RETURNING *`,
+        [reason || null, expiresAt, mutedBy, serverId, userId]
+      );
+      logger.info(`User ${userId} mute updated in server ${serverId} by ${mutedBy}`);
+      return result.rows[0] as ServerMute;
+    }
+
+    const result = await query(
+      `INSERT INTO server_mutes (server_id, user_id, muted_by, reason, expires_at)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [serverId, userId, mutedBy, reason || null, expiresAt]
+    );
+
+    // Log to audit
+    await query(
+      `INSERT INTO audit_logs (server_id, user_id, action, target_user_id, reason)
+       VALUES ($1, $2, 'mute', $3, $4)`,
+      [serverId, mutedBy, userId, reason || null]
+    );
+
+    logger.info(`User ${userId} muted in server ${serverId} by ${mutedBy}`);
+    return result.rows[0] as ServerMute;
+  }
+
+  // Unmute a user
+  async unmuteUser(serverId: number, userId: number, unmutedBy: number): Promise<void> {
+    await query(
+      'DELETE FROM server_mutes WHERE server_id = $1 AND user_id = $2',
+      [serverId, userId]
+    );
+
+    // Log to audit
+    await query(
+      `INSERT INTO audit_logs (server_id, user_id, action, target_user_id)
+       VALUES ($1, $2, 'unmute', $3)`,
+      [serverId, unmutedBy, userId]
+    );
+
+    logger.info(`User ${userId} unmuted in server ${serverId}`);
+  }
+
+  // Get mute for a specific user
+  async getMute(serverId: number, userId: number): Promise<ServerMute | null> {
+    // Also check if the mute has expired
+    const result = await queryOne<ServerMute>(
+      `SELECT * FROM server_mutes 
+       WHERE server_id = $1 AND user_id = $2 
+       AND (expires_at IS NULL OR expires_at > NOW())`,
+      [serverId, userId]
+    );
+    return result;
+  }
+
+  // Get all mutes for a server
+  async getMutes(serverId: number): Promise<MuteWithUser[]> {
+    const result = await query(
+      `SELECT sm.*, u.username, u.display_name, mb.username as muted_by_username
+       FROM server_mutes sm
+       JOIN users u ON sm.user_id = u.id
+       LEFT JOIN users mb ON sm.muted_by = mb.id
+       WHERE sm.server_id = $1
+       AND (sm.expires_at IS NULL OR sm.expires_at > NOW())
+       ORDER BY sm.created_at DESC`,
+      [serverId]
+    );
+    return result.rows as MuteWithUser[];
+  }
+
+  // Check if user is muted
+  async isMuted(serverId: number, userId: number): Promise<boolean> {
+    const mute = await this.getMute(serverId, userId);
+    return !!mute;
+  }
+
+  // Clean up expired mutes
+  async cleanupExpiredMutes(): Promise<number> {
+    const result = await query(
+      'DELETE FROM server_mutes WHERE expires_at IS NOT NULL AND expires_at <= NOW()'
+    );
+    const count = result.rowCount || 0;
+    if (count > 0) {
+      logger.debug(`Cleaned up ${count} expired mutes`);
+    }
+    return count;
   }
 }
 

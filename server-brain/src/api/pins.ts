@@ -65,19 +65,41 @@ class PinService {
     );
   }
 
-  // Get all pinned messages in a channel
+  // Get all pinned messages in a channel (excluding deleted messages)
   async getPinnedMessages(channelId: number): Promise<PinnedMessage[]> {
     const result = await query(
       `SELECT mp.id, mp.message_id, mp.channel_id, mp.pinned_by, mp.pinned_at, 
               m.content as message_content, u.username, u.display_name
        FROM message_pins mp
-       JOIN messages m ON mp.message_id = m.id
-       JOIN users u ON m.user_id = u.id
+       INNER JOIN messages m ON mp.message_id = m.id
+       INNER JOIN users u ON m.user_id = u.id
        WHERE mp.channel_id = $1
        ORDER BY mp.pinned_at DESC`,
       [channelId]
     );
+    
+    // Clean up any dead pins (messages that no longer exist)
+    await this.cleanupDeadPins(channelId);
+    
     return result.rows as PinnedMessage[];
+  }
+
+  // Remove pins for messages that no longer exist (dead pins)
+  async cleanupDeadPins(channelId?: number): Promise<number> {
+    const channelFilter = channelId ? `AND mp.channel_id = ${channelId}` : '';
+    const result = await query(
+      `DELETE FROM message_pins mp
+       WHERE NOT EXISTS (
+         SELECT 1 FROM messages m WHERE m.id = mp.message_id
+       ) ${channelFilter}
+       RETURNING mp.id`
+    );
+    
+    const deletedCount = result.rows.length;
+    if (deletedCount > 0) {
+      logger.info(`Cleaned up ${deletedCount} dead pin(s)`);
+    }
+    return deletedCount;
   }
 
   // Check if message is pinned

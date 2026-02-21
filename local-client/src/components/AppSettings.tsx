@@ -62,7 +62,6 @@ interface AppSettingsPanelProps {
   onLogout?: () => void;
   onOpenMFA?: () => void;
   onOpenPasswordReset?: () => void;
-  onOpenModeration?: () => void;
   onAvatarChange?: (dataUrl: string) => void;
 }
 
@@ -136,7 +135,7 @@ function resizeImageToDataUrl(file: File, size = 128): Promise<string> {
 const AppSettingsPanel: React.FC<AppSettingsPanelProps> = ({
   isOpen, onClose, settings, onSave,
   className = '', username = 'Unknown', email = '',
-  onLogout, onOpenMFA, onOpenPasswordReset, onOpenModeration, onAvatarChange,
+  onLogout, onOpenMFA, onOpenPasswordReset, onAvatarChange,
 }) => {
   type Section = 'account' | 'appearance' | 'notifications' | 'voice' | 'privacy';
   const [activeSection, setActiveSection] = useState<Section>('account');
@@ -169,6 +168,31 @@ const AppSettingsPanel: React.FC<AppSettingsPanelProps> = ({
   const [avatarSaving, setAvatarSaving] = useState(false);
   const [avatarError, setAvatarError] = useState('');
   const avatarInputRef = useRef<HTMLInputElement>(null);
+
+  // Admin token claim
+  const [showAdminCodeInput, setShowAdminCodeInput] = useState(false);
+  const [adminCode, setAdminCode] = useState('');
+  const [adminClaiming, setAdminClaiming] = useState(false);
+  const [adminClaimSuccess, setAdminClaimSuccess] = useState(false);
+  const [adminClaimError, setAdminClaimError] = useState('');
+
+  const handleClaimAdmin = async () => {
+    if (!adminCode.trim()) return;
+    setAdminClaiming(true);
+    setAdminClaimError('');
+    try {
+      const result = await apiClient.claimAdminToken(adminCode.trim());
+      if (result.success) {
+        setAdminClaimSuccess(true);
+        setShowAdminCodeInput(false);
+        setAdminCode('');
+      }
+    } catch (err) {
+      setAdminClaimError(err instanceof Error ? err.message : 'Failed to claim admin privileges');
+    } finally {
+      setAdminClaiming(false);
+    }
+  };
 
   useEffect(() => {
     if (settings) setLocalSettings(settings);
@@ -378,6 +402,51 @@ const AppSettingsPanel: React.FC<AppSettingsPanelProps> = ({
               </div>
 
               <hr style={S.divider} />
+              <p style={S.h4}>🔐 Admin Access</p>
+              <div style={{ marginBottom: '24px' }}>
+                {adminClaimSuccess ? (
+                  <div style={{ padding: '12px 14px', background: 'rgba(87,242,135,0.1)', border: '1px solid #57f287', borderRadius: '6px', color: '#57f287', fontSize: '14px' }}>
+                    ✓ Admin privileges granted! You now have full moderation access.
+                  </div>
+                ) : (
+                  <div>
+                    <button
+                      onClick={() => setShowAdminCodeInput(!showAdminCodeInput)}
+                      style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', width: '100%', background: '#1e1f22', border: '1px solid #3a3c40', borderRadius: '6px', color: '#dbdee1', cursor: 'pointer', fontSize: '14px' }}
+                    >
+                      Claim Admin Privileges<span style={{ color: '#5865f2' }}>›</span>
+                    </button>
+                    {showAdminCodeInput && (
+                      <div style={{ marginTop: '12px' }}>
+                        <p style={{ color: '#949ba4', fontSize: '12px', marginBottom: '8px' }}>
+                          Enter the admin code shown in the server console to gain admin privileges.
+                        </p>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <input
+                            type="text"
+                            value={adminCode}
+                            onChange={e => setAdminCode(e.target.value)}
+                            placeholder="Enter admin code"
+                            style={{ ...S.input, flex: 1, fontFamily: 'monospace' }}
+                          />
+                          <button
+                            onClick={handleClaimAdmin}
+                            disabled={adminClaiming || !adminCode.trim()}
+                            style={{ padding: '9px 16px', background: adminClaiming || !adminCode.trim() ? '#4e5058' : '#5865f2', border: 'none', borderRadius: '4px', color: '#fff', cursor: adminClaiming || !adminCode.trim() ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: 600 }}
+                          >
+                            {adminClaiming ? 'Claiming...' : 'Claim'}
+                          </button>
+                        </div>
+                        {adminClaimError && (
+                          <p style={{ color: '#ed4245', fontSize: '12px', marginTop: '8px' }}>{adminClaimError}</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <hr style={S.divider} />
               <p style={S.h4}>🔒 Security</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '24px' }}>
                 {[
@@ -389,11 +458,6 @@ const AppSettingsPanel: React.FC<AppSettingsPanelProps> = ({
                   </button>
                 ))}
               </div>
-
-              <p style={S.h4}>🛡️ Moderation</p>
-              <button onClick={onOpenModeration} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', background: '#1e1f22', border: '1px solid #3a3c40', borderRadius: '6px', color: '#dbdee1', cursor: 'pointer', fontSize: '14px', width: '100%', marginBottom: '24px' }}>
-                Moderation Panel<span style={{ color: '#5865f2' }}>›</span>
-              </button>
 
               <button onClick={() => { onClose(); onLogout?.(); }} style={{ padding: '10px 18px', background: '#da373c', border: 'none', borderRadius: '4px', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>
                 Log Out

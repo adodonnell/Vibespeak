@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import './RightDrawer.css';
+import { ContextMenu, ContextMenuItem, ContextMenuIcons } from '../ui/ContextMenu';
 
 export interface Member {
   id: number;
@@ -16,6 +17,13 @@ interface RightDrawerProps {
   selectedMember?: Member | null;
   onClose: () => void;
   onMemberClick?: (member: Member) => void;
+  // Moderation props
+  serverId?: number;
+  currentUserId?: number;
+  isServerOwner?: boolean;
+  onKickUser?: (member: Member) => void;
+  onBanUser?: (member: Member) => void;
+  onMuteUser?: (member: Member, durationMinutes?: number) => void;
 }
 
 const RightDrawer: React.FC<RightDrawerProps> = ({
@@ -25,8 +33,15 @@ const RightDrawer: React.FC<RightDrawerProps> = ({
   selectedMember,
   onClose,
   onMemberClick,
+  serverId,
+  currentUserId,
+  isServerOwner,
+  onKickUser,
+  onBanUser,
+  onMuteUser,
 }) => {
   const [expandedRoles, setExpandedRoles] = useState<Record<string, boolean>>({});
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; member: Member } | null>(null);
 
   if (!isOpen) return null;
 
@@ -50,10 +65,92 @@ const RightDrawer: React.FC<RightDrawerProps> = ({
     }
   };
 
+  const handleContextMenu = (e: React.MouseEvent, member: Member) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Don't show moderation options for yourself
+    if (member.id === currentUserId) {
+      return;
+    }
+    
+    setContextMenu({ x: e.clientX, y: e.clientY, member });
+  };
+
+  const closeContextMenu = () => {
+    setContextMenu(null);
+  };
+
+  const getContextMenuItems = (): ContextMenuItem[] => {
+    if (!contextMenu?.member || !serverId) return [];
+    
+    const member = contextMenu.member;
+    const items: ContextMenuItem[] = [
+      {
+        id: 'profile',
+        label: 'View Profile',
+        icon: ContextMenuIcons.profile,
+        onClick: () => {
+          onMemberClick?.(member);
+        },
+      },
+    ];
+
+    // Add moderation options if user has permissions
+    if (isServerOwner && onKickUser) {
+      items.push(
+        { id: '---', label: '', disabled: true },
+        {
+          id: 'kick',
+          label: 'Kick User',
+          icon: ContextMenuIcons.kick,
+          danger: true,
+          onClick: () => {
+            if (confirm(`Kick ${member.displayName || member.username}?`)) {
+              onKickUser(member);
+            }
+          },
+        }
+      );
+    }
+
+    if (isServerOwner && onBanUser) {
+      items.push({
+        id: 'ban',
+        label: 'Ban User',
+        icon: ContextMenuIcons.ban,
+        danger: true,
+        onClick: () => {
+          if (confirm(`Ban ${member.displayName || member.username}?`)) {
+            onBanUser(member);
+          }
+        },
+      });
+    }
+
+    if (isServerOwner && onMuteUser) {
+      items.push({
+        id: 'mute',
+        label: 'Mute User',
+        icon: ContextMenuIcons.mute,
+        danger: true,
+        submenu: [
+          { id: 'mute-1h', label: '1 Hour', onClick: () => onMuteUser(member, 60) },
+          { id: 'mute-24h', label: '24 Hours', onClick: () => onMuteUser(member, 1440) },
+          { id: 'mute-7d', label: '7 Days', onClick: () => onMuteUser(member, 10080) },
+          { id: 'mute-perm', label: 'Permanent', onClick: () => onMuteUser(member) },
+        ],
+      });
+    }
+
+    return items;
+  };
+
   const MemberItem: React.FC<{ member: Member }> = ({ member }) => (
     <div 
       className="member-item"
       onClick={() => onMemberClick?.(member)}
+      onContextMenu={(e) => handleContextMenu(e, member)}
     >
       <div className="member-avatar">
         {(member.username || '?').charAt(0).toUpperCase()}
@@ -196,6 +293,15 @@ const RightDrawer: React.FC<RightDrawerProps> = ({
           </div>
         )}
       </div>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <ContextMenu
+          items={getContextMenuItems()}
+          position={{ x: contextMenu.x, y: contextMenu.y }}
+          onClose={closeContextMenu}
+        />
+      )}
     </div>
   );
 };

@@ -10,6 +10,7 @@ export interface User {
   isInVoice?: boolean;
   isMuted?: boolean;
   isDeafened?: boolean;
+  isAdmin?: boolean;
 }
 
 interface UserListProps {
@@ -69,6 +70,7 @@ function UserList({ users, currentUserId }: UserListProps) {
       </div>
       <div className="user-list-info">
         <span className="user-list-name">
+          {user.isAdmin && <span style={{ marginRight: '4px', fontSize: '12px' }} title="Admin">🛡️</span>}
           {user.username}
           {user.id === currentUserId && <span className="you-badge">(you)</span>}
         </span>

@@ -17,6 +17,7 @@ export enum RolePermissions {
   MANAGE_MESSAGES = 1 << 7,     // 128 - Manage messages (pin, delete others')
   MENTION_EVERYONE = 1 << 8,    // 256 - Mention @everyone
   MOVE_MEMBERS = 1 << 9,        // 512 - Move members between voice
+  MUTE_MEMBERS = 1 << 10,       // 1024 - Mute members (timeout)
 }
 
 // Channel-level permissions
@@ -244,6 +245,10 @@ class RoleService {
 
   canBanMembers(permissions: number): boolean {
     return this.hasPermission(permissions, RolePermissions.BAN_MEMBERS);
+  }
+
+  canMuteMembers(permissions: number): boolean {
+    return this.hasPermission(permissions, RolePermissions.MUTE_MEMBERS);
   }
 
   canManageMessages(permissions: number): boolean {

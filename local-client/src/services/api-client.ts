@@ -397,6 +397,21 @@ class ApiClient {
     return this.request(`/api/servers/${serverId}/kick`, { method: 'POST', body: JSON.stringify({ user_id: userId, reason }) });
   }
 
+  async getMutes(serverId: number): Promise<{ id: number; user_id: number; username: string; reason: string | null; expires_at: string | null; muted_at: string }[]> {
+    return this.request(`/api/servers/${serverId}/mutes`, { method: 'GET' });
+  }
+
+  async muteUser(serverId: number, userId: number, reason?: string, durationMinutes?: number): Promise<{ success: boolean }> {
+    return this.request(`/api/servers/${serverId}/mutes`, { 
+      method: 'POST', 
+      body: JSON.stringify({ user_id: userId, reason, duration_minutes: durationMinutes }) 
+    });
+  }
+
+  async unmuteUser(serverId: number, userId: number): Promise<{ success: boolean }> {
+    return this.request(`/api/servers/${serverId}/mutes/${userId}`, { method: 'DELETE' });
+  }
+
   // === SEARCH ===
   async searchGlobal(query: string): Promise<{ messages: Message[]; users: { id: number; username: string }[]; servers: { id: number; name: string }[] }> {
     return this.request(`/api/search?q=${encodeURIComponent(query)}`, { method: 'GET' });
@@ -480,6 +495,11 @@ class ApiClient {
   // === AUDIT LOGS ===
   async getAuditLogs(serverId: number, limit = 50): Promise<{ id: number; server_id: number; user_id: number; action: string; target_user_id: number; reason: string; created_at: string; actor_username: string }[]> {
     return this.request(`/api/servers/${serverId}/audit-logs?limit=${limit}`, { method: 'GET' });
+  }
+
+  // === ADMIN TOKEN CLAIM (TeamSpeak-style) ===
+  async claimAdminToken(code: string): Promise<{ success: boolean; message: string; isAdmin: boolean }> {
+    return this.request('/api/admin/claim', { method: 'POST', body: JSON.stringify({ code }) });
   }
 
   // === THREADS ===

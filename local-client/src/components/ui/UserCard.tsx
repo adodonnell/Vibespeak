@@ -10,6 +10,7 @@ export interface VoiceUser {
   audioLevel: number;
   isMuted: boolean;
   isDeafened: boolean;
+  isAdmin?: boolean;
   // Extended stats
   bytesSent?: number;
   bytesReceived?: number;
@@ -140,6 +141,7 @@ const UserCard: React.FC<UserCardProps> = ({
         
         {/* Name */}
         <div className="user-card-name">
+          {user.isAdmin && <span style={{ marginRight: '4px', fontSize: '12px' }} title="Admin">🛡️</span>}
           {user.username}
           {isCurrentUser && <span style={{ fontSize: '10px', marginLeft: '4px', opacity: 0.7 }}>(You)</span>}
         </div>

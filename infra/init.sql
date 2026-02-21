@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS roles (
     name VARCHAR(100) NOT NULL,
     color VARCHAR(7) DEFAULT '#99AAB5',
     position INTEGER DEFAULT 0,
-    permissions JSONB DEFAULT '{}',
+    permissions INTEGER DEFAULT 0,
     hoist BOOLEAN DEFAULT FALSE,
     mentionable BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT NOW()
@@ -125,12 +125,9 @@ CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash ON user_sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_user_settings_user_id ON user_settings(user_id);
 
--- SECURITY: Default admin user for local development only.
--- The hash below is for password: Disorder@Dev1 (bcrypt cost 12)
--- Change this password immediately after first login in any real deployment.
-INSERT INTO users (username, password_hash, display_name, email) 
-VALUES ('admin', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LeHq8H7eKf1X9JXHC', 'Admin', 'admin@localhost')
-ON CONFLICT (username) DO NOTHING;
+-- NOTE: No default admin user. Admin privileges are granted via token claim.
+-- The server generates a single-use admin token on startup (shown in console).
+-- Users can claim admin privileges from Settings → My Account → Claim Admin Privileges.
 
 -- Insert default server
 INSERT INTO servers (name, address, port, password)
@@ -501,3 +498,23 @@ CREATE TABLE IF NOT EXISTS auto_mod_rules (
 );
 
 CREATE INDEX IF NOT EXISTS idx_auto_mod_rules_server_id ON auto_mod_rules(server_id);
+
+-- ============================================
+-- SERVER MUTES
+-- ============================================
+
+-- Server mutes (timeout users)
+CREATE TABLE IF NOT EXISTS server_mutes (
+    id SERIAL PRIMARY KEY,
+    server_id INTEGER REFERENCES servers(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    muted_by INTEGER REFERENCES users(id),
+    reason VARCHAR(500),
+    expires_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(server_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_server_mutes_server_id ON server_mutes(server_id);
+CREATE INDEX IF NOT EXISTS idx_server_mutes_user_id ON server_mutes(user_id);
+CREATE INDEX IF NOT EXISTS idx_server_mutes_expires_at ON server_mutes(expires_at);

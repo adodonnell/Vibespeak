@@ -9,6 +9,18 @@ import { verifyToken, registerUser, loginUser, refreshToken as refreshTokenFn, l
 import { initRedis, closeRedis, isRedisConnected, redisHealthCheck, setPresence, setOffline } from './redis.js';
 import http from 'http';
 import { brotliCompressSync, gzipSync, deflateSync } from 'zlib';
+import { randomBytes } from 'crypto';
+
+// ============================================
+// ADMIN TOKEN SYSTEM (TeamSpeak-style)
+// ============================================
+// Single-use token generated on server startup.
+// Share with trusted users to grant admin privileges.
+let adminToken: string | null = null;
+
+function generateAdminToken(): string {
+  return randomBytes(16).toString('hex'); // 32-char hex string
+}
 
 // Compression configuration
 const SHOULD_COMPRESS = process.env.DISABLE_COMPRESSION !== 'true';
@@ -102,7 +114,7 @@ function generateSessionId(): string {
 }
 
 async function main() {
-    logger.info('=== VibeSpeak Server Starting ===');
+  logger.info('=== VibeSpeak Server Starting ===');
   
   try {
     initDatabase();
@@ -113,6 +125,20 @@ async function main() {
   
   memoryStore.initialize();
   logger.info('Memory store initialized (fallback mode)');
+  
+  // Generate and log admin token (TeamSpeak-style)
+  adminToken = generateAdminToken();
+  logger.info('');
+  logger.info('╔════════════════════════════════════════════════════════════╗');
+  logger.info('║                    ADMIN TOKEN                             ║');
+  logger.info('╠════════════════════════════════════════════════════════════╣');
+  logger.info(`║  Code: ${adminToken}                                    ║`);
+  logger.info('║                                                            ║');
+  logger.info('║  Share this code with trusted users to grant them admin    ║');
+  logger.info('║  privileges. The code is single-use and will be consumed   ║');
+  logger.info('║  after one successful claim.                               ║');
+  logger.info('╚════════════════════════════════════════════════════════════╝');
+  logger.info('');
   
   signalingServer.start(WS_PORT);
   logger.info(`WebSocket signaling server on port ${WS_PORT}`);
@@ -1365,19 +1391,20 @@ async function main() {
           nickname: null,
           roles: [],
           status: 'online',
+          isAdmin: false,
         }));
         // Also include users from memoryStore (registered via guest login)
         const memUsers = memoryStore.getOnlineUsers();
         const memUserIds = new Set(onlineMembers.map(m => m.user_id));
         for (const u of memUsers) {
           if (!memUserIds.has(u.id)) {
-            onlineMembers.push({ id: onlineMembers.length + 1, user_id: u.id, username: u.username, nickname: null, roles: [], status: 'online' });
+            onlineMembers.push({ id: onlineMembers.length + 1, user_id: u.id, username: u.username, nickname: null, roles: [], status: 'online', isAdmin: false });
           }
         }
         // Add current JWT user if authenticated
         const jwtUser = getJwtUser(req.headers.authorization || null);
         if (jwtUser && !onlineMembers.some(m => m.user_id === jwtUser.id)) {
-          onlineMembers.push({ id: onlineMembers.length + 1, user_id: jwtUser.id, username: jwtUser.username, nickname: null, roles: [], status: 'online' });
+          onlineMembers.push({ id: onlineMembers.length + 1, user_id: jwtUser.id, username: jwtUser.username, nickname: null, roles: [], status: 'online', isAdmin: false });
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(onlineMembers));
@@ -1385,9 +1412,21 @@ async function main() {
       }
       try {
         const { memberService } = await import('./api/members.js');
+        const { roleService, RolePermissions } = await import('./api/roles.js');
         const members = await memberService.getMembers(serverId);
+        
+        // Check admin status for each member
+        const membersWithAdmin = await Promise.all(members.map(async (m: any) => {
+          try {
+            const permissions = await roleService.getMemberPermissionLevel(serverId, m.user_id);
+            return { ...m, isAdmin: roleService.isAdmin(permissions) };
+          } catch {
+            return { ...m, isAdmin: false };
+          }
+        }));
+        
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(members));
+        res.end(JSON.stringify(membersWithAdmin));
       } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: 'Failed' })); }
       return;
     }
@@ -1651,6 +1690,63 @@ async function main() {
       return;
     }
 
+    // GET /api/servers/:id/mutes - Get mutes
+    if (url.pathname.match(/^\/api\/servers\/\d+\/mutes$/) && req.method === 'GET') {
+      const serverId = parseInt(url.pathname.split('/')[3]);
+      if (!getDbStatus()) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify([]));
+        return;
+      }
+      try {
+        const { moderationService } = await import('./api/moderation.js');
+        const mutes = await moderationService.getMutes(serverId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(mutes));
+      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: 'Failed' })); }
+      return;
+    }
+
+    // POST /api/servers/:id/mutes - Mute user (requires MUTE_MEMBERS or ADMIN permission)
+    if (url.pathname.match(/^\/api\/servers\/\d+\/mutes$/) && req.method === 'POST') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      const serverId = parseInt(url.pathname.split('/')[3]);
+      if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
+      
+      try {
+        // Check permission
+        const { roleService } = await import('./api/roles.js');
+        const permissions = await roleService.getMemberPermissionLevel(serverId, jwtUser.id);
+        if (!roleService.canMuteMembers(permissions) && !roleService.isAdmin(permissions)) {
+          res.writeHead(403); res.end(JSON.stringify({ error: 'You do not have permission to mute members' })); return;
+        }
+        
+        const { user_id, reason, duration_minutes } = await parseBody();
+        const { moderationService } = await import('./api/moderation.js');
+        await moderationService.muteUser(serverId, user_id, jwtUser.id, reason, duration_minutes);
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (err) { res.writeHead(400); res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Failed' })); }
+      return;
+    }
+
+    // DELETE /api/servers/:id/mutes/:userId - Unmute user
+    if (url.pathname.match(/^\/api\/servers\/\d+\/mutes\/\d+$/) && req.method === 'DELETE') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      const serverId = parseInt(url.pathname.split('/')[3]);
+      const userId = parseInt(url.pathname.split('/')[5]);
+      if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
+      try {
+        const { moderationService } = await import('./api/moderation.js');
+        await moderationService.unmuteUser(serverId, userId, jwtUser.id);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (err) { res.writeHead(400); res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Failed' })); }
+      return;
+    }
+
     // ============================================
     // USERS API
     // ============================================
@@ -1707,6 +1803,71 @@ async function main() {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
       } catch (err) { res.writeHead(400); res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Failed' })); }
+      return;
+    }
+
+    // ============================================
+    // ADMIN TOKEN CLAIM API
+    // ============================================
+
+    // POST /api/admin/claim - Claim admin privileges using the server token
+    if (url.pathname === '/api/admin/claim' && req.method === 'POST') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized - please log in first' })); return; }
+      
+      try {
+        const { code } = await parseBody();
+        if (!code) { res.writeHead(400); res.end(JSON.stringify({ error: 'Admin code required' })); return; }
+        
+        // Check if the code matches the current admin token
+        if (!adminToken || code !== adminToken) {
+          res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid or already-used admin code' })); 
+          return;
+        }
+        
+        // Grant admin role to the user
+        if (getDbStatus()) {
+          const { roleService, RolePermissions } = await import('./api/roles.js');
+          
+          // Create or get the Admin role for server 1 (default server)
+          let adminRole = await queryOne<{ id: number }>(
+            "SELECT id FROM roles WHERE server_id = 1 AND name = 'Admin'"
+          );
+          
+          if (!adminRole) {
+            // Create Admin role with full permissions
+            const result = await query(
+              `INSERT INTO roles (server_id, name, color, position, permissions, hoist, mentionable)
+               VALUES (1, 'Admin', '#e74c3c', 100, $1, true, true)
+               RETURNING id`,
+              [RolePermissions.ADMIN | RolePermissions.BAN_MEMBERS | RolePermissions.KICK_MEMBERS | RolePermissions.MUTE_MEMBERS | RolePermissions.MANAGE_CHANNELS | RolePermissions.MANAGE_ROLES | RolePermissions.MANAGE_MESSAGES]
+            );
+            adminRole = result.rows[0] as { id: number };
+          }
+          
+          // Assign the admin role to the user (append to roles array)
+          await query(
+            `UPDATE server_members SET roles = roles || $1::jsonb
+             WHERE server_id = 1 AND user_id = $2`,
+            [JSON.stringify([adminRole.id]), jwtUser.id]
+          );
+          
+          logger.info(`Admin privileges granted to user ${jwtUser.username} (${jwtUser.id}) via token claim`);
+        }
+        
+        // Consume the token (single-use)
+        adminToken = null;
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          success: true, 
+          message: 'Admin privileges granted! You now have full moderation access.',
+          isAdmin: true 
+        }));
+      } catch (err) { 
+        logger.error('Failed to claim admin token:', err);
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Failed to grant admin privileges' })); 
+      }
       return;
     }
 

@@ -10,11 +10,9 @@ interface LoginScreenProps {
 }
 
 const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
-  // Default to guest mode — most users join without an account (TeamSpeak-like)
-  const [isGuestMode, setIsGuestMode] = useState(true);
+  // Guest-only login — TeamSpeak style (no password login)
   const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const { login, guestLogin, isLoading, error, clearError } = useAuth();
+  const { guestLogin, isLoading, error, clearError } = useAuth();
 
   // Pre-fill saved guest username on mount
   useEffect(() => {
@@ -41,25 +39,13 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     if (!trimmed) return;
 
     try {
-      if (isGuestMode) {
-        await guestLogin(trimmed);
-        // Persist guest username so the field is pre-filled next session
-        localStorage.setItem(GUEST_USERNAME_KEY, trimmed);
-      } else {
-        await login(trimmed, password);
-        // Clear any stale guest username when signing in as registered user
-        localStorage.removeItem(GUEST_USERNAME_KEY);
-      }
+      await guestLogin(trimmed);
+      // Persist guest username so the field is pre-filled next session
+      localStorage.setItem(GUEST_USERNAME_KEY, trimmed);
       onLoginSuccess?.();
     } catch (_) {
       // Error is surfaced via AuthContext's `error` state
     }
-  };
-
-  const toggleMode = () => {
-    setIsGuestMode(prev => !prev);
-    clearError();
-    setPassword('');
   };
 
   return (
@@ -88,9 +74,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             </div>
             <h1 className="login-title">VibeSpeak</h1>
             <p className="login-subtitle">
-              {isGuestMode
-                ? 'Pick a username and start chatting!'
-                : 'Admin / Registered user sign-in'}
+              Pick a username and start chatting!
             </p>
           </div>
 
@@ -107,13 +91,13 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             {/* Username */}
             <div className="login-field">
               <label className="login-label">
-                {isGuestMode ? 'Choose a username' : 'Username'}
+                Choose a username
               </label>
               <input
                 type="text"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
-                placeholder={isGuestMode ? 'e.g. CoolGamer99' : 'username'}
+                placeholder="e.g. CoolGamer99"
                 className="login-input"
                 autoFocus
                 required
@@ -124,21 +108,6 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
               />
             </div>
 
-            {/* Password — only for registered login */}
-            {!isGuestMode && (
-              <div className="login-field">
-                <label className="login-label">Password</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="login-input"
-                  required
-                />
-              </div>
-            )}
-
             {/* Submit */}
             <button
               type="submit"
@@ -147,29 +116,16 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             >
               {isLoading
                 ? <span className="loading-spinner">⟳</span>
-                : isGuestMode ? 'Join' : 'Sign In'}
+                : 'Join'}
             </button>
           </form>
 
-          {/* Toggle between guest and registered */}
-          <div className="login-divider"><span>or</span></div>
-          <button
-            type="button"
-            onClick={toggleMode}
-            className="login-toggle"
-          >
-            {isGuestMode
-              ? 'Sign in with a registered account'
-              : 'Continue as Guest (no account needed)'}
-          </button>
-
           {/* Hint for guest users */}
-          {isGuestMode && (
-            <p className="login-guest-hint">
-              No registration required. Your username is saved locally so you
-              reconnect automatically next time.
-            </p>
-          )}
+          <p className="login-guest-hint">
+            No registration required. Your username is saved locally so you
+            reconnect automatically next time. Admin privileges can be claimed
+            from Settings after joining.
+          </p>
 
           {/* Change server link */}
           <div className="login-change-server">
