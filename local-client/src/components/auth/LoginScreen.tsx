@@ -171,6 +171,30 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             </p>
           )}
 
+          {/* Change server link */}
+          <div className="login-change-server">
+            <button
+              type="button"
+              onClick={() => {
+                localStorage.removeItem('disorder:server-configured');
+                localStorage.removeItem('disorder:api-url');
+                localStorage.removeItem('disorder:ws-url');
+                window.location.reload();
+              }}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#00A8FC',
+                cursor: 'pointer',
+                fontSize: '13px',
+                textDecoration: 'underline',
+                padding: 0,
+              }}
+            >
+              Change Server
+            </button>
+          </div>
+
           <div className="login-footer">
             <span className="version">v1.0.0</span>
           </div>
