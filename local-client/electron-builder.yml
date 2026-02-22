@@ -44,21 +44,13 @@ nsis:
   displayLanguageSelector: false
 
 # Linux Configuration
+# Note: deb/rpm/AppImage require building on Linux. Use tar.gz for cross-platform builds.
 linux:
   target:
-    - target: AppImage
-      arch:
-        - x64
-    - target: deb
-      arch:
-        - x64
-        - arm64
-    - target: rpm
-      arch:
-        - x64
     - target: tar.gz
       arch:
         - x64
+        - arm64
   category: Network
   maintainer: VibeSpeak Team <team@vibespeak.app>
   synopsis: VibeSpeak — TeamSpeak-style community voice and text platform
@@ -149,8 +141,7 @@ protocols:
 
 # File Associations
 fileAssociations:
-  - ext:
-      - .vibespeak
+  - ext: .vibespeak
     name: VibeSpeak Server Config
     description: VibeSpeak Server Configuration File
     role: Editor

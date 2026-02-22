@@ -1,6 +1,60 @@
 import { query, queryOne } from '../db/database.js';
 import { logger } from '../utils/logger.js';
 
+// Input sanitization utilities
+const MAX_MESSAGE_LENGTH = 4000;
+const MAX_SEARCH_LENGTH = 100;
+const DANGEROUS_PATTERNS = [
+  /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,  // Script tags
+  /javascript:/gi,                                         // JavaScript URLs
+  /on\w+\s*=/gi,                                          // Event handlers
+  /data:\s*text\/html/gi,                                 // Data URLs with HTML
+];
+
+function sanitizeContent(content: string): string {
+  if (typeof content !== 'string') return '';
+  
+  // Trim whitespace
+  let sanitized = content.trim();
+  
+  // Limit length
+  if (sanitized.length > MAX_MESSAGE_LENGTH) {
+    sanitized = sanitized.substring(0, MAX_MESSAGE_LENGTH);
+  }
+  
+  // Remove dangerous patterns (basic XSS prevention)
+  for (const pattern of DANGEROUS_PATTERNS) {
+    sanitized = sanitized.replace(pattern, '');
+  }
+  
+  // Escape HTML entities for safe storage/display
+  sanitized = sanitized
+    .replace(/&/g, '&')
+    .replace(/</g, '<')
+    .replace(/>/g, '>')
+    .replace(/"/g, '"')
+    .replace(/'/g, '&#x27;');
+  
+  return sanitized;
+}
+
+function sanitizeSearchTerm(term: string): string {
+  if (typeof term !== 'string') return '';
+  
+  // Remove SQL-like pattern characters
+  let sanitized = term.replace(/[%_\\]/g, '\\$&');
+  
+  // Limit length
+  if (sanitized.length > MAX_SEARCH_LENGTH) {
+    sanitized = sanitized.substring(0, MAX_SEARCH_LENGTH);
+  }
+  
+  // Remove any null bytes or control characters
+  sanitized = sanitized.replace(/[\x00-\x1f\x7f]/g, '');
+  
+  return sanitized.trim();
+}
+
 export interface Message {
   id: number;
   channel_id: number;
@@ -32,7 +86,7 @@ export interface CreateMessageInput {
   channel_id: number;
   user_id: number;
   content: string;
-  parent_id?: number;
+  parent_id?: number | undefined;
 }
 
 export interface UpdateMessageInput {
@@ -48,11 +102,14 @@ export interface GetMessagesOptions {
 
 class MessageService {
   async createMessage(input: CreateMessageInput): Promise<Message> {
+    // Sanitize content before storage
+    const sanitizedContent = sanitizeContent(input.content);
+    
     const result = await query(
       `INSERT INTO messages (channel_id, user_id, content, parent_id)
        VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [input.channel_id, input.user_id, input.content, input.parent_id || null]
+      [input.channel_id, input.user_id, sanitizedContent, input.parent_id || null]
     );
     
     logger.debug(`Message created: channel ${input.channel_id}, user ${input.user_id}`);
@@ -70,7 +127,7 @@ class MessageService {
 
     if (input.content !== undefined) {
       updates.push(`content = $${paramIndex++}`);
-      params.push(input.content);
+      params.push(sanitizeContent(input.content)); // Sanitize on update too
       updates.push(`edited_at = NOW()`);
     }
 
@@ -154,6 +211,9 @@ class MessageService {
   }
 
   async searchMessages(channelId: number, searchTerm: string): Promise<MessageWithUser[]> {
+    const sanitizedTerm = sanitizeSearchTerm(searchTerm);
+    if (!sanitizedTerm) return [];
+    
     const result = await query(
       `SELECT m.*, u.username, u.display_name
        FROM messages m
@@ -161,12 +221,15 @@ class MessageService {
        WHERE m.channel_id = $1 AND m.content ILIKE $2
        ORDER BY m.created_at DESC
        LIMIT 50`,
-      [channelId, `%${searchTerm}%`]
+      [channelId, `%${sanitizedTerm}%`]
     );
     return result.rows as MessageWithUser[];
   }
 
   async searchAllMessages(searchTerm: string, limit: number = 50): Promise<MessageWithUser[]> {
+    const sanitizedTerm = sanitizeSearchTerm(searchTerm);
+    if (!sanitizedTerm) return [];
+    
     const result = await query(
       `SELECT m.*, u.username, u.display_name, c.name as channel_name
        FROM messages m
@@ -175,7 +238,7 @@ class MessageService {
        WHERE m.content ILIKE $1
        ORDER BY m.created_at DESC
        LIMIT $2`,
-      [`%${searchTerm}%`, limit]
+      [`%${sanitizedTerm}%`, limit]
     );
     return result.rows as MessageWithUser[];
   }
@@ -222,6 +285,35 @@ class MessageService {
       [channelId]
     );
     return parseInt(result?.count || '0', 10);
+  }
+
+  // Cursor-based pagination: get messages before a specific message ID
+  async getMessagesBefore(channelId: number, beforeMessageId: number, limit: number = 50): Promise<MessageWithUser[]> {
+    const result = await query(
+      `SELECT m.*, u.username, u.display_name
+       FROM messages m
+       JOIN users u ON m.user_id = u.id
+       WHERE m.channel_id = $1 AND m.parent_id IS NULL AND m.id < $2
+       ORDER BY m.created_at DESC
+       LIMIT $3`,
+      [channelId, beforeMessageId, limit]
+    );
+    return result.rows as MessageWithUser[];
+  }
+
+  // Cursor-based pagination: get messages after a specific message ID
+  async getMessagesAfter(channelId: number, afterMessageId: number, limit: number = 50): Promise<MessageWithUser[]> {
+    const result = await query(
+      `SELECT m.*, u.username, u.display_name
+       FROM messages m
+       JOIN users u ON m.user_id = u.id
+       WHERE m.channel_id = $1 AND m.parent_id IS NULL AND m.id > $2
+       ORDER BY m.created_at ASC
+       LIMIT $3`,
+      [channelId, afterMessageId, limit]
+    );
+    // Reverse to maintain chronological order
+    return (result.rows as MessageWithUser[]).reverse();
   }
 
   // Batch operations for performance optimization

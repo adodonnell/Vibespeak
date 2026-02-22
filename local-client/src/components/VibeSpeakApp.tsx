@@ -11,8 +11,6 @@ import { useToast } from '../contexts/ToastContext';
 import AppSettings from './AppSettings';
 import { SearchModal } from './SearchModal';
 import { ServerDiscovery } from './ServerDiscovery';
-import MFASetup from './MFASetup';
-import PasswordReset from './PasswordReset';
 import PresenceIndicator, { StatusSelector } from './PresenceIndicator';
 import { useReadReceipts } from './ReadReceipts';
 
@@ -68,15 +66,19 @@ const VibeSpeakAppContent: React.FC = () => {
   useEffect(() => { currentVoiceChannelNameRef.current = currentVoiceChannelName; }, [currentVoiceChannelName]);
   useEffect(() => { userRef.current = user; }, [user]);
 
-  const [screenShareStream, setScreenShareStream] = useState<MediaStream | null>(null);
-  const [screenSharePresenter, setScreenSharePresenter] = useState<string>('');
-  const [isLocalScreenShare, setIsLocalScreenShare] = useState(false);
+  // Support multiple simultaneous screen shares: Map of userId -> stream info
+  const [screenShares, setScreenShares] = useState<Map<string, {
+    stream: MediaStream;
+    presenterName: string;
+    isLocal: boolean;
+  }>>(new Map());
+  
+  // Currently featured/visible screen share (null = show all in grid)
+  const [featuredScreenShareId, setFeaturedScreenShareId] = useState<string | null>(null);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [serverDiscoveryOpen, setServerDiscoveryOpen] = useState(false);
-  const [mfaOpen, setMfaOpen] = useState(false);
-  const [passwordResetOpen, setPasswordResetOpen] = useState(false);
 
   // Create-server modal (replaces prompt() — not supported in Electron)
   const [createServerOpen, setCreateServerOpen] = useState(false);
@@ -219,14 +221,34 @@ const VibeSpeakAppContent: React.FC = () => {
     // Store handler references so we can remove them on cleanup
     const handleUserJoined = (_uid: string) => playSound('join');
     const handleUserLeft = (_uid: string) => playSound('leave');
+    
+    // Handle incoming screen share from another user
     const handleIncomingScreenShare = (userId: string, stream: MediaStream) => {
-      setScreenShareStream(stream); setScreenSharePresenter(userId); setIsLocalScreenShare(false);
+      setScreenShares(prev => {
+        const newMap = new Map(prev);
+        newMap.set(userId, { stream, presenterName: userId, isLocal: false });
+        return newMap;
+      });
     };
+    
+    // Handle local screen share start
     const handleScreenShareStart = (stream: MediaStream) => {
-      setScreenShareStream(stream); setScreenSharePresenter(user.username); setIsLocalScreenShare(true);
+      if (!user) return;
+      setScreenShares(prev => {
+        const newMap = new Map(prev);
+        newMap.set(user.username, { stream, presenterName: user.username, isLocal: true });
+        return newMap;
+      });
     };
+    
+    // Handle screen share stop (local or remote)
     const handleScreenShareStop = () => {
-      setScreenShareStream(null); setScreenSharePresenter(''); setIsLocalScreenShare(false);
+      if (!user) return;
+      setScreenShares(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(user.username);
+        return newMap;
+      });
     };
 
     voiceClient.onUserJoined(handleUserJoined);
@@ -671,6 +693,16 @@ const VibeSpeakAppContent: React.FC = () => {
       }))
     : [];
 
+  // Derive screen share values from the Map for backward compatibility with MainPane
+  // Get the first (or featured) screen share for single-stream view
+  const screenShareEntries = Array.from(screenShares.entries());
+  const featuredEntry = featuredScreenShareId 
+    ? screenShares.get(featuredScreenShareId) 
+    : screenShareEntries[0]?.[1];
+  const screenShareStream = featuredEntry?.stream ?? null;
+  const screenSharePresenter = featuredEntry?.presenterName ?? '';
+  const isLocalScreenShare = featuredEntry?.isLocal ?? false;
+
   // ── Render ─────────────────────────────────────────────────────────────────
   if (isRestoring) {
     return (
@@ -785,12 +817,9 @@ const VibeSpeakAppContent: React.FC = () => {
             privacy: { showOnlineStatus: true, allowServerInvites: true },
           }}
           username={user.username}
-          email={(user as any).email ?? ''}
           onLogout={handleLogout}
           onSave={(s) => { console.log('Settings saved:', s); setSettingsOpen(false); }}
           onAvatarChange={setAvatarUrl}
-          onOpenMFA={() => { setSettingsOpen(false); setMfaOpen(true); }}
-          onOpenPasswordReset={() => { setSettingsOpen(false); setPasswordResetOpen(true); }}
         />
       )}
 
@@ -809,9 +838,6 @@ const VibeSpeakAppContent: React.FC = () => {
         onClose={() => setServerDiscoveryOpen(false)}
         onJoinServer={(serverId) => setActiveServerId(Number(serverId))}
       />
-
-      {mfaOpen && <MFASetup onComplete={() => setMfaOpen(false)} onCancel={() => setMfaOpen(false)} />}
-      {passwordResetOpen && <PasswordReset onComplete={() => setPasswordResetOpen(false)} onCancel={() => setPasswordResetOpen(false)} />}
 
       {/* Create Server modal — replaces prompt() for Electron compatibility */}
       {createServerOpen && (

@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "author": "VibeSpeak Team",
+  "homepage": "https://github.com/adodonnell/Vibespeak",
   "description": "VibeSpeak Desktop Client - Electron + React",
   "main": "dist-electron/main.js",
   "scripts": {

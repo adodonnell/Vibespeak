@@ -58,10 +58,7 @@ interface AppSettingsPanelProps {
   onSave: (settings: AppSettings) => void;
   className?: string;
   username?: string;
-  email?: string;
   onLogout?: () => void;
-  onOpenMFA?: () => void;
-  onOpenPasswordReset?: () => void;
   onAvatarChange?: (dataUrl: string) => void;
 }
 
@@ -134,8 +131,8 @@ function resizeImageToDataUrl(file: File, size = 128): Promise<string> {
 
 const AppSettingsPanel: React.FC<AppSettingsPanelProps> = ({
   isOpen, onClose, settings, onSave,
-  className = '', username = 'Unknown', email = '',
-  onLogout, onOpenMFA, onOpenPasswordReset, onAvatarChange,
+  className = '', username = 'Unknown',
+  onLogout, onAvatarChange,
 }) => {
   type Section = 'account' | 'appearance' | 'notifications' | 'voice' | 'privacy';
   const [activeSection, setActiveSection] = useState<Section>('account');
@@ -396,10 +393,6 @@ const AppSettingsPanel: React.FC<AppSettingsPanelProps> = ({
                 <label style={S.label}>Username</label>
                 <input type="text" value={username} readOnly style={S.input} />
               </div>
-              <div style={S.group}>
-                <label style={S.label}>Email</label>
-                <input type="email" value={email || '—'} readOnly style={S.input} />
-              </div>
 
               <hr style={S.divider} />
               <p style={S.h4}>🔐 Admin Access</p>
@@ -444,19 +437,6 @@ const AppSettingsPanel: React.FC<AppSettingsPanelProps> = ({
                     )}
                   </div>
                 )}
-              </div>
-
-              <hr style={S.divider} />
-              <p style={S.h4}>🔒 Security</p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '24px' }}>
-                {[
-                  { label: 'Two-Factor Authentication', cb: onOpenMFA },
-                  { label: 'Change Password', cb: onOpenPasswordReset },
-                ].map(item => (
-                  <button key={item.label} onClick={item.cb} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', background: '#1e1f22', border: '1px solid #3a3c40', borderRadius: '6px', color: '#dbdee1', cursor: 'pointer', fontSize: '14px' }}>
-                    {item.label}<span style={{ color: '#5865f2' }}>›</span>
-                  </button>
-                ))}
               </div>
 
               <button onClick={() => { onClose(); onLogout?.(); }} style={{ padding: '10px 18px', background: '#da373c', border: 'none', borderRadius: '4px', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>

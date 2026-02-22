@@ -15,15 +15,10 @@
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "express-validator": "^7.0.1",
-    "helmet": "^7.1.0",
     "ioredis": "^5.9.3",
     "jsonwebtoken": "^9.0.2",
-    "matrix-js-sdk": "^40.3.0-rc.0",
     "otplib": "^13.3.0",
     "pg": "^8.11.3",
-    "ts3-nodejs-library": "^2.0.0",
     "winston": "^3.11.0",
     "ws": "^8.19.0"
   },

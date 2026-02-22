@@ -5,10 +5,8 @@ import { voiceRelayServer } from './voice-relay.js';
 import { initDatabase, closeDatabase, isDbAvailable, query, queryOne } from './db/database.js';
 import { memoryStore } from './db/memory-store.js';
 import { messageService } from './api/messages.js';
-import { verifyToken, registerUser, loginUser, refreshToken as refreshTokenFn, logoutUser, validatePassword } from './auth.js';
-import { initRedis, closeRedis, isRedisConnected, redisHealthCheck, setPresence, setOffline } from './redis.js';
+import { verifyToken } from './auth.js';
 import http from 'http';
-import { brotliCompressSync, gzipSync, deflateSync } from 'zlib';
 import { randomBytes } from 'crypto';
 
 // ============================================
@@ -20,42 +18,6 @@ let adminToken: string | null = null;
 
 function generateAdminToken(): string {
   return randomBytes(16).toString('hex'); // 32-char hex string
-}
-
-// Compression configuration
-const SHOULD_COMPRESS = process.env.DISABLE_COMPRESSION !== 'true';
-const COMPRESSION_THRESHOLD = 1024; // Only compress responses > 1KB
-
-// Synchronous compression helper - returns compressed buffer or null if no compression
-function compressBuffer(data: string, acceptEncoding: string): { buffer: Buffer; encoding: string } | null {
-  if (!SHOULD_COMPRESS || data.length < COMPRESSION_THRESHOLD) {
-    return null;
-  }
-  
-  const buffer = Buffer.from(data, 'utf-8');
-  
-  // Check if client supports Brotli (best compression - ~20% better than gzip)
-  if (acceptEncoding.includes('br')) {
-    try {
-      return { buffer: brotliCompressSync(buffer), encoding: 'br' };
-    } catch { /* fall through */ }
-  }
-  
-  // Fall back to gzip
-  if (acceptEncoding.includes('gzip')) {
-    try {
-      return { buffer: gzipSync(buffer), encoding: 'gzip' };
-    } catch { /* fall through */ }
-  }
-  
-  // Fall back to deflate
-  if (acceptEncoding.includes('deflate')) {
-    try {
-      return { buffer: deflateSync(buffer), encoding: 'deflate' };
-    } catch { /* fall through */ }
-  }
-  
-  return null;
 }
 
 const PORT = parseInt(process.env.PORT || '3001');
@@ -81,12 +43,14 @@ function isValidUsername(username: unknown): boolean {
   return typeof username === 'string' && /^[a-zA-Z0-9_]{3,32}$/.test(username);
 }
 
-function isValidEmail(email: unknown): boolean {
+// Email validation - used for registration
+export function isValidEmail(email: unknown): boolean {
   if (typeof email !== 'string') return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-function isValidPassword(password: unknown): boolean {
+// Password validation - used for registration
+export function isValidPassword(password: unknown): boolean {
   return typeof password === 'string' && password.length >= 8;
 }
 
@@ -261,55 +225,6 @@ async function main() {
       return;
     }
     
-    // POST /api/auth/register
-    if (url.pathname === '/api/auth/register' && req.method === 'POST') {
-      if (!getDbStatus()) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Registration requires a database. This instance is running in memory-only mode.' }));
-        return;
-      }
-      try {
-        const { username, email, password } = await parseBody();
-        // Validate inputs
-        if (!isValidUsername(username)) { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid username: must be 3-32 alphanumeric characters' })); return; }
-        if (!isValidEmail(email)) { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid email format' })); return; }
-        const pwValidation = validatePassword(password);
-        if (!pwValidation.valid) { res.writeHead(400); res.end(JSON.stringify({ error: pwValidation.error })); return; }
-        const result = await registerUser(username, email, password);
-        res.writeHead(201); res.end(JSON.stringify({ success: true, user: result.user, tokens: result.tokens }));
-      } catch (err) { res.writeHead(400); res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Failed' })); }
-      return;
-    }
-
-    // POST /api/auth/login
-    if (url.pathname === '/api/auth/login' && req.method === 'POST') {
-      try {
-        const { username, password } = await parseBody();
-        if (!username || !password) { res.writeHead(400); res.end(JSON.stringify({ error: 'Missing fields' })); return; }
-        
-        // DB login
-        if (getDbStatus()) {
-          try {
-            const result = await loginUser(username, password);
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ 
-              success: true, 
-              user: result.user, 
-              token: result.tokens.accessToken,
-              tokens: result.tokens 
-            }));
-            return;
-          } catch (_err) {
-            // Fall through to 401
-          }
-        }
-        
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Invalid credentials' }));
-      } catch (err) { res.writeHead(400); res.end(JSON.stringify({ error: 'Bad request' })); }
-      return;
-    }
-
     // GET /api/auth/me - Validate token and return current user
     if (url.pathname === '/api/auth/me' && req.method === 'GET') {
       const jwtUser = getJwtUser(req.headers.authorization || null);
@@ -426,332 +341,6 @@ async function main() {
           }
         }));
       } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: 'Guest login failed' })); }
-      return;
-    }
-
-    // ============================================
-    // OAUTH2 API
-    // ============================================
-
-    // GET /api/oauth2/providers - List available OAuth providers
-    if (url.pathname === '/api/oauth2/providers' && req.method === 'GET') {
-      const providers = [];
-      if (process.env.GOOGLE_CLIENT_ID) providers.push({ name: 'google', displayName: 'Google' });
-      if (process.env.DISCORD_CLIENT_ID) providers.push({ name: 'discord', displayName: 'Discord' });
-      if (process.env.GITHUB_CLIENT_ID) providers.push({ name: 'github', displayName: 'GitHub' });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(providers));
-      return;
-    }
-
-    // GET /api/oauth2/:provider - Redirect to OAuth provider
-    if (url.pathname.match(/^\/api\/oauth2\/(google|discord|github)$/) && req.method === 'GET') {
-      const provider = url.pathname.split('/')[3];
-      const redirectUri = `http://localhost:3001/api/oauth2/${provider}/callback`;
-      let authUrl = '';
-      let clientId = '';
-      
-      switch (provider) {
-        case 'google':
-          clientId = process.env.GOOGLE_CLIENT_ID || '';
-          authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent('openid email profile')}&access_type=offline`;
-          break;
-        case 'discord':
-          clientId = process.env.DISCORD_CLIENT_ID || '';
-          authUrl = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent('identify email')}`;
-          break;
-        case 'github':
-          clientId = process.env.GITHUB_CLIENT_ID || '';
-          authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent('user:email read:user')}`;
-          break;
-      }
-      
-      if (!clientId) { res.writeHead(503); res.end(JSON.stringify({ error: 'Provider not configured' })); return; }
-      res.writeHead(302, { 'Location': authUrl });
-      res.end();
-      return;
-    }
-
-    // GET /api/oauth2/:provider/callback - OAuth callback handler
-    if (url.pathname.match(/^\/api\/oauth2\/(google|discord|github)\/callback$/) && req.method === 'GET') {
-      const provider = url.pathname.split('/')[3];
-      const code = url.searchParams.get('code');
-      const errorParam = url.searchParams.get('error');
-      
-      if (errorParam) {
-        res.writeHead(302, { 'Location': '/?error=oauth_failed' });
-        res.end();
-        return;
-      }
-      
-      if (!code) {
-        res.writeHead(400); res.end(JSON.stringify({ error: 'No code provided' })); return;
-      }
-      
-      try {
-        const redirectUri = `http://localhost:3001/api/oauth2/${provider}/callback`;
-        let tokenResponse: any;
-        let userInfo: any;
-        
-        switch (provider) {
-          case 'google': {
-            const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                code,
-                client_id: process.env.GOOGLE_CLIENT_ID,
-                client_secret: process.env.GOOGLE_CLIENT_SECRET,
-                redirect_uri: redirectUri,
-                grant_type: 'authorization_code'
-              })
-            });
-            tokenResponse = await tokenRes.json();
-            const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-              headers: { 'Authorization': `Bearer ${tokenResponse.access_token}` }
-            });
-            userInfo = await userRes.json();
-            break;
-          }
-          case 'discord': {
-            const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: new URLSearchParams({
-                code,
-                client_id: process.env.DISCORD_CLIENT_ID || '',
-                client_secret: process.env.DISCORD_CLIENT_SECRET || '',
-                redirect_uri: redirectUri,
-                grant_type: 'authorization_code'
-              })
-            });
-            tokenResponse = await tokenRes.json();
-            const userRes = await fetch('https://discord.com/api/users/@me', {
-              headers: { 'Authorization': `Bearer ${tokenResponse.access_token}` }
-            });
-            userInfo = await userRes.json();
-            break;
-          }
-          case 'github': {
-            const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-              body: JSON.stringify({
-                code,
-                client_id: process.env.GITHUB_CLIENT_ID,
-                client_secret: process.env.GITHUB_CLIENT_SECRET,
-                redirect_uri: redirectUri
-              })
-            });
-            tokenResponse = await tokenRes.json();
-            const userRes = await fetch('https://api.github.com/user', {
-              headers: { 'Authorization': `Bearer ${tokenResponse.access_token}` }
-            });
-            userInfo = await userRes.json();
-            break;
-          }
-        }
-        
-        // Find or create user
-        if (getDbStatus()) {
-          const { userService } = await import('./api/users.js');
-          const { oauth2Service } = await import('./api/oauth2.js');
-          
-          let user = await oauth2Service.getConnectionByProviderUser(provider, userInfo.id.toString());
-          
-          if (!user) {
-            const oauthUsername = (userInfo.name || userInfo.login || userInfo.email?.split('@')[0] || 'user').replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 32) || 'oauth_user';
-            const newUser = await userService.createUser({ username: oauthUsername, password: Math.random().toString(36).substring(2), display_name: oauthUsername });
-            await oauth2Service.saveConnection(newUser.id, provider, userInfo.id.toString(), tokenResponse.access_token, tokenResponse.refresh_token, tokenResponse.expires_in);
-            
-            const { generateToken } = await import('./auth.js');
-            const token = generateToken({ id: newUser.id, username: newUser.username });
-            res.writeHead(302, { 'Location': `http://localhost:5173/?token=${token}&oauth=success` });
-            res.end();
-            return;
-          } else {
-            await oauth2Service.updateAccessToken(user.user_id, provider, tokenResponse.access_token, tokenResponse.refresh_token, tokenResponse.expires_in);
-            const dbUser = await userService.getUserById(user.user_id);
-            const { generateToken } = await import('./auth.js');
-            const token = generateToken({ id: dbUser?.id ?? user.user_id, username: dbUser?.username ?? 'user' });
-            res.writeHead(302, { 'Location': `http://localhost:5173/?token=${token}&oauth=success` });
-            res.end();
-            return;
-          }
-        }
-        
-        res.writeHead(302, { 'Location': '/?error=oauth_failed' });
-        res.end();
-      } catch (err) {
-        logger.error('OAuth callback error:', err);
-        res.writeHead(302, { 'Location': '/?error=oauth_failed' });
-        res.end();
-      }
-      return;
-    }
-
-    // GET /api/oauth2/connections - Get user's OAuth connections
-    if (url.pathname === '/api/oauth2/connections' && req.method === 'GET') {
-      const jwtUser = getJwtUser(req.headers.authorization || null);
-      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
-      if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
-      
-      try {
-        const { oauth2Service } = await import('./api/oauth2.js');
-        const connections = await oauth2Service.getConnections(jwtUser.id);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(connections));
-      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: 'Failed' })); }
-      return;
-    }
-
-    // DELETE /api/oauth2/connections/:provider - Remove OAuth connection
-    if (url.pathname.match(/^\/api\/oauth2\/connections\/(google|discord|github)$/) && req.method === 'DELETE') {
-      const jwtUser = getJwtUser(req.headers.authorization || null);
-      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
-      if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
-      
-      const provider = url.pathname.split('/')[4];
-      
-      try {
-        const { oauth2Service } = await import('./api/oauth2.js');
-        await oauth2Service.unlinkAccount(jwtUser.id, provider);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true }));
-      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: 'Failed' })); }
-      return;
-    }
-
-    // ============================================
-    // MFA API
-    // ============================================
-
-    // GET /api/mfa/status - Get MFA status
-    if (url.pathname === '/api/mfa/status' && req.method === 'GET') {
-      const jwtUser = getJwtUser(req.headers.authorization || null);
-      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
-      if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
-      
-      try {
-        const { mfaService } = await import('./api/mfa.js');
-        const mfa = await mfaService.getMFA(jwtUser.id);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(mfa || { enabled: false, hasBackupCodes: false }));
-      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: 'Failed' })); }
-      return;
-    }
-
-    // POST /api/mfa/setup - Setup MFA
-    if (url.pathname === '/api/mfa/setup' && req.method === 'POST') {
-      const jwtUser = getJwtUser(req.headers.authorization || null);
-      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
-      if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
-      
-      try {
-        const { mfaService } = await import('./api/mfa.js');
-        const result = await mfaService.setupMFA(jwtUser.id);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(result));
-      } catch (err) { res.writeHead(400); res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Failed' })); }
-      return;
-    }
-
-    // POST /api/mfa/verify - Verify MFA code
-    if (url.pathname === '/api/mfa/verify' && req.method === 'POST') {
-      const jwtUser = getJwtUser(req.headers.authorization || null);
-      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
-      if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
-      
-      try {
-        const { code } = await parseBody();
-        if (!code) { res.writeHead(400); res.end(JSON.stringify({ error: 'Code required' })); return; }
-        
-        const { mfaService } = await import('./api/mfa.js');
-        const valid = await mfaService.verifyMFA(jwtUser.id, code);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ valid }));
-      } catch (err) { res.writeHead(400); res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Invalid code' })); }
-      return;
-    }
-
-    // POST /api/mfa/disable - Disable MFA
-    if (url.pathname === '/api/mfa/disable' && req.method === 'POST') {
-      const jwtUser = getJwtUser(req.headers.authorization || null);
-      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
-      if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
-      
-      try {
-        const { code } = await parseBody();
-        if (!code) { res.writeHead(400); res.end(JSON.stringify({ error: 'Code required' })); return; }
-        
-        const { mfaService } = await import('./api/mfa.js');
-        const valid = await mfaService.verifyMFA(jwtUser.id, code);
-        if (!valid) { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid code' })); return; }
-        
-        await mfaService.disableMFA(jwtUser.id);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true }));
-      } catch (err) { res.writeHead(400); res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Failed' })); }
-      return;
-    }
-
-    // ============================================
-    // PASSWORD RESET API
-    // ============================================
-
-    // POST /api/auth/password-reset-request - Request password reset
-    if (url.pathname === '/api/auth/password-reset-request' && req.method === 'POST') {
-      if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
-      
-      try {
-        const { email } = await parseBody();
-        if (!email) { res.writeHead(400); res.end(JSON.stringify({ error: 'Email required' })); return; }
-        
-        const { passwordResetService } = await import('./api/mfa.js');
-        const user = await passwordResetService.getUserByEmail(email);
-        
-        // Always return success to prevent email enumeration
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, message: 'If the email exists, a reset link has been sent' }));
-        
-        if (user) {
-          const token = await passwordResetService.generateResetToken(user.id);
-          logger.info(`Password reset requested for user ${user.id}, token: ${token}`);
-          // In production, send email with token
-        }
-      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: 'Failed' })); }
-      return;
-    }
-
-    // POST /api/auth/password-reset - Reset password with token
-    if (url.pathname === '/api/auth/password-reset' && req.method === 'POST') {
-      if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
-      
-      try {
-        const { token, password } = await parseBody();
-        if (!token || !password) { res.writeHead(400); res.end(JSON.stringify({ error: 'Token and password required' })); return; }
-        
-        const { passwordResetService } = await import('./api/mfa.js');
-        const userId = await passwordResetService.verifyResetToken(token);
-        
-        if (!userId) { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid or expired token' })); return; }
-        
-        // Validate password
-        const { validatePassword } = await import('./auth.js');
-        const validation = validatePassword(password);
-        if (!validation.valid) { res.writeHead(400); res.end(JSON.stringify({ error: validation.error })); return; }
-        
-        // Hash and update password
-        const bcrypt = await import('bcryptjs');
-        const passwordHash = await bcrypt.hash(password, 12);
-        await query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, userId]);
-        
-        // Mark token as used
-        await passwordResetService.useResetToken(token);
-        
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true }));
-      } catch (err) { res.writeHead(400); res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Failed' })); }
       return;
     }
 
@@ -899,7 +488,11 @@ async function main() {
       const channelId = parseInt(url.pathname.split('/')[3]);
       if (isNaN(channelId)) { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid channel ID' })); return; }
 
-      const limit = parseInt(url.searchParams.get('limit') || '50');
+      // Pagination parameters
+      const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100); // Max 100
+      const before = url.searchParams.get('before'); // Message ID cursor
+      const after = url.searchParams.get('after');   // Message ID cursor
+      const beforeTimestamp = url.searchParams.get('beforeTimestamp'); // Timestamp cursor
       
       // Check If-None-Match header for ETag caching
       const ifNoneMatch = req.headers['if-none-match'];
@@ -907,7 +500,48 @@ async function main() {
       // Use PostgreSQL if available, fallback to memory store
       if (getDbStatus()) {
         try {
-          const messages = await messageService.getRecentMessages(channelId, limit);
+          let messages: any[];
+          let hasMore = false;
+          let nextCursor: string | null = null;
+          let prevCursor: string | null = null;
+          
+          if (before) {
+            // Get messages before a specific message ID (older messages)
+            messages = await messageService.getMessagesBefore(channelId, parseInt(before), limit + 1);
+            hasMore = messages.length > limit;
+            if (hasMore) messages = messages.slice(0, limit);
+            if (messages.length > 0) {
+              nextCursor = messages[messages.length - 1].id.toString();
+              prevCursor = messages[0].id.toString();
+            }
+          } else if (after) {
+            // Get messages after a specific message ID (newer messages)
+            messages = await messageService.getMessagesAfter(channelId, parseInt(after), limit + 1);
+            hasMore = messages.length > limit;
+            if (hasMore) messages = messages.slice(0, limit);
+            if (messages.length > 0) {
+              prevCursor = messages[messages.length - 1].id.toString();
+              nextCursor = messages[0].id.toString();
+            }
+          } else if (beforeTimestamp) {
+            // Legacy timestamp-based pagination
+            messages = await messageService.getMessagesByChannel(channelId, { 
+              before: parseInt(beforeTimestamp), 
+              limit: limit + 1 
+            });
+            hasMore = messages.length > limit;
+            if (hasMore) messages = messages.slice(0, limit);
+          } else {
+            // Initial load - get most recent messages
+            messages = await messageService.getRecentMessages(channelId, limit + 1);
+            hasMore = messages.length > limit;
+            if (hasMore) messages = messages.slice(0, limit);
+            if (messages.length > 0) {
+              nextCursor = messages[messages.length - 1].id.toString();
+            }
+          }
+          
+          // Reverse for chronological order (oldest first)
           const reversed = messages.reverse();
           
           // Generate ETag from message IDs and timestamps (fast hash)
@@ -922,12 +556,23 @@ async function main() {
             return;
           }
           
+          // Build pagination response
+          const response: any = {
+            messages: reversed,
+            pagination: {
+              hasMore,
+              limit,
+              nextCursor,
+              prevCursor,
+            }
+          };
+          
           res.writeHead(200, { 
             'Content-Type': 'application/json',
             'ETag': etag,
             'Cache-Control': 'private, max-age=5' // 5 seconds client cache
           });
-          res.end(JSON.stringify(reversed));
+          res.end(JSON.stringify(response));
           return;
         } catch (err) {
           logger.error('Failed to get messages from DB:', err);
@@ -937,7 +582,7 @@ async function main() {
       // Fallback to memory store
       const messages = memoryStore.getMessages(channelId, limit);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(messages.reverse()));
+      res.end(JSON.stringify({ messages: messages.reverse(), pagination: { hasMore: false, limit } }));
       return;
     }
 
@@ -1878,6 +1523,7 @@ async function main() {
 
   process.on('SIGINT', async () => {
     logger.info('Shutting down...');
+    signalingServer.cleanup(); // Clean up memory before stopping
     signalingServer.stop();
     voiceRelayServer.stop();
     await closeDatabase();

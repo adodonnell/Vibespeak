@@ -417,6 +417,36 @@ export class SignalingServer {
     }
     this.clientUsernames.delete(ws);
     this.clientUserIds.delete(ws);
+    
+    // Clean up all maps to prevent memory leaks
+    this.pingIntervals.delete(ws);
+    this.pingTimeouts.delete(ws);
+    this.clientRooms.delete(ws);
+  }
+
+  // Cleanup method for graceful shutdown - clears all memory
+  cleanup(): void {
+    // Stop all heartbeats
+    this.pingIntervals.forEach((interval, ws) => {
+      clearInterval(interval);
+    });
+    this.pingIntervals.clear();
+    
+    this.pingTimeouts.forEach((timeout) => {
+      clearTimeout(timeout);
+    });
+    this.pingTimeouts.clear();
+    
+    // Clear all client tracking maps
+    this.clientIds.clear();
+    this.clientUsernames.clear();
+    this.clientUserIds.clear();
+    this.clientRooms.clear();
+    
+    // Clear all rooms
+    this.rooms.clear();
+    
+    logger.info('WebSocket server memory cleaned up');
   }
 
   stop(): void {
