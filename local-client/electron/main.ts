@@ -207,6 +207,21 @@ app.whenReady().then(() => {
     }
   });
 
+  // IPC: Toggle fullscreen mode
+  ipcMain.handle('toggle-fullscreen', async () => {
+    if (mainWindow) {
+      const isFullScreen = mainWindow.isFullScreen();
+      mainWindow.setFullScreen(!isFullScreen);
+      return !isFullScreen;
+    }
+    return false;
+  });
+
+  // IPC: Get fullscreen state
+  ipcMain.handle('is-fullscreen', async () => {
+    return mainWindow?.isFullScreen() ?? false;
+  });
+
   // IPC: renderer asks for a list of capturable sources (so it can show a picker)
   ipcMain.handle('get-screen-sources', async () => {
     try {

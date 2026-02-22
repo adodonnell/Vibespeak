@@ -86,10 +86,19 @@ const ScreenShareViewer: React.FC<ScreenShareViewerProps> = ({
   }, [resetHideTimer]);
 
   const toggleFullscreen = useCallback(async () => {
-    const elem = containerRef.current;
-    if (!elem) return;
-    
     try {
+      // In Electron, use the IPC API for proper fullscreen support
+      const electronAPI = (window as any).electronAPI;
+      if (electronAPI?.toggleFullscreen) {
+        const isFull = await electronAPI.toggleFullscreen();
+        setIsFullscreen(isFull);
+        return;
+      }
+      
+      // Fallback for browser - use element fullscreen
+      const elem = containerRef.current;
+      if (!elem) return;
+      
       const isCurrentlyFullscreen = !!(
         document.fullscreenElement || 
         (document as any).webkitFullscreenElement ||
@@ -98,7 +107,7 @@ const ScreenShareViewer: React.FC<ScreenShareViewerProps> = ({
       );
       
       if (!isCurrentlyFullscreen) {
-        // Enter fullscreen - must be direct call from user gesture, no async delays
+        // Enter fullscreen
         if (elem.requestFullscreen) {
           await elem.requestFullscreen();
         } else if ((elem as any).webkitRequestFullscreen) {

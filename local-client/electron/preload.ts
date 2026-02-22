@@ -66,6 +66,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Screen capture: ask main process for capturable sources
   getScreenSources: () => ipcRenderer.invoke('get-screen-sources'),
+  
+  // Fullscreen control
+  toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),
+  isFullscreen: () => ipcRenderer.invoke('is-fullscreen'),
 
   // Version info
   versions: {
@@ -88,11 +92,13 @@ declare global {
       pttPressed: () => void;
       pttReleased: () => void;
       getScreenSources: () => Promise<Array<{ id: string; name: string; thumbnail: string; type: 'screen' | 'window' }>>;
+      toggleFullscreen: () => Promise<boolean>;
+      isFullscreen: () => Promise<boolean>;
       versions: {
         node: string;
         chrome: string;
         electron: string;
       };
     };
-  }
+  };
 }
