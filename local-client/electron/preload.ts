@@ -79,26 +79,4 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 });
 
-// Type declarations for renderer process
-declare global {
-    interface Window {
-    electronAPI: {
-      platform: NodeJS.Platform;
-      send: (channel: string, data?: unknown) => void;
-      on: (channel: string, callback: (...args: unknown[]) => void) => () => void;
-      minimize: () => void;
-      maximize: () => void;
-      close: () => void;
-      pttPressed: () => void;
-      pttReleased: () => void;
-      getScreenSources: () => Promise<Array<{ id: string; name: string; thumbnail: string; type: 'screen' | 'window' }>>;
-      toggleFullscreen: () => Promise<boolean>;
-      isFullscreen: () => Promise<boolean>;
-      versions: {
-        node: string;
-        chrome: string;
-        electron: string;
-      };
-    };
-  };
-}
+// Type declarations are in local-client/src/types/electron.d.ts
