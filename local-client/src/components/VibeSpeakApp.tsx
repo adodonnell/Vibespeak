@@ -147,6 +147,12 @@ const VibeSpeakAppContent: React.FC = () => {
       const inVoice = isInVoiceRef.current;
       
       setVoiceChannels(prev => {
+        // Validate channels is an array
+        if (!Array.isArray(channels)) {
+          console.warn('[VibeSpeakApp] onVoiceChannelUpdate received non-array:', channels);
+          return prev;
+        }
+        
         // Build a map of channel -> deduplicated users by username
         let newChannels = channels.map(ch => {
           // Deduplicate users by username in each channel
