@@ -127,11 +127,6 @@ const ScreenShareViewer: React.FC<ScreenShareViewerProps> = ({
     }
   }, []);
 
-  // Double-click to toggle fullscreen
-  const handleDoubleClick = useCallback(() => {
-    toggleFullscreen();
-  }, [toggleFullscreen]);
-
   return (
     <div
       ref={containerRef}
@@ -146,7 +141,7 @@ const ScreenShareViewer: React.FC<ScreenShareViewerProps> = ({
         overflow: 'hidden',
       }}
       onMouseMove={resetHideTimer}
-      onDoubleClick={handleDoubleClick}
+      onDoubleClick={toggleFullscreen}
     >
       {/* Video */}
       <video
