@@ -50,10 +50,27 @@ const ScreenShareViewer: React.FC<ScreenShareViewerProps> = ({
   // Listen for fullscreen changes (including user pressing Escape)
   useEffect(() => {
     const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
+      const isFull = !!(
+        document.fullscreenElement || 
+        (document as any).webkitFullscreenElement ||
+        (document as any).mozFullScreenElement ||
+        (document as any).msFullscreenElement
+      );
+      setIsFullscreen(isFull);
     };
+    
+    // Listen to all vendor-prefixed events
     document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+    
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
+    };
   }, []);
 
   // Auto-hide controls after 3s of no mouse movement
@@ -69,18 +86,60 @@ const ScreenShareViewer: React.FC<ScreenShareViewerProps> = ({
   }, [resetHideTimer]);
 
   const toggleFullscreen = useCallback(async () => {
-    if (!containerRef.current) return;
+    // Try container first, then video element as fallback
+    const elem = containerRef.current || videoRef.current;
+    if (!elem) return;
     
     try {
-      if (!document.fullscreenElement) {
-        await containerRef.current.requestFullscreen();
-        setIsFullscreen(true);
+      const isCurrentlyFullscreen = !!(
+        document.fullscreenElement || 
+        (document as any).webkitFullscreenElement ||
+        (document as any).mozFullScreenElement ||
+        (document as any).msFullscreenElement
+      );
+      
+      if (!isCurrentlyFullscreen) {
+        // Try standard API first, then vendor-prefixed fallbacks
+        if (elem.requestFullscreen) {
+          await elem.requestFullscreen();
+        } else if ((elem as any).webkitRequestFullscreen) {
+          await (elem as any).webkitRequestFullscreen();
+        } else if ((elem as any).webkitRequestFullScreen) {
+          // Older Safari/Chrome
+          await (elem as any).webkitRequestFullScreen();
+        } else if ((elem as any).mozRequestFullScreen) {
+          await (elem as any).mozRequestFullScreen();
+        } else if ((elem as any).msRequestFullscreen) {
+          await (elem as any).msRequestFullscreen();
+        } else {
+          console.warn('No fullscreen API available');
+        }
       } else {
-        await document.exitFullscreen();
-        setIsFullscreen(false);
+        // Exit fullscreen
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if ((document as any).webkitExitFullscreen) {
+          await (document as any).webkitExitFullscreen();
+        } else if ((document as any).webkitCancelFullScreen) {
+          await (document as any).webkitCancelFullScreen();
+        } else if ((document as any).mozCancelFullScreen) {
+          await (document as any).mozCancelFullScreen();
+        } else if ((document as any).msExitFullscreen) {
+          await (document as any).msExitFullscreen();
+        }
       }
     } catch (err) {
       console.error('Fullscreen error:', err);
+      // Try video element as fallback if container failed
+      if (elem === containerRef.current && videoRef.current) {
+        try {
+          if (videoRef.current.requestFullscreen) {
+            await videoRef.current.requestFullscreen();
+          }
+        } catch (e) {
+          console.error('Video fullscreen fallback also failed:', e);
+        }
+      }
     }
   }, []);
 
