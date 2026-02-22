@@ -33,23 +33,6 @@ const ScreenShareViewer: React.FC<ScreenShareViewerProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
-  
-  // Log component mount for debugging
-  useEffect(() => {
-    console.log('[ScreenShareViewer] Component mounted with stream:', stream?.id);
-    console.log('[ScreenShareViewer] presenterName:', presenterName);
-    console.log('[ScreenShareViewer] isLocalShare:', isLocalShare);
-    return () => {
-      console.log('[ScreenShareViewer] Component unmounted');
-    };
-  }, []);
-
-  // TEMPORARY: Keep controls always visible for debugging
-  // TODO: Re-enable auto-hide after fixing fullscreen
-  useEffect(() => {
-    // Keep controls visible
-    setShowControls(true);
-  }, []);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Attach stream to video element
@@ -64,32 +47,6 @@ const ScreenShareViewer: React.FC<ScreenShareViewerProps> = ({
     };
   }, [stream]);
 
-  // Listen for fullscreen changes (including user pressing Escape)
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      const isFull = !!(
-        document.fullscreenElement || 
-        (document as any).webkitFullscreenElement ||
-        (document as any).mozFullScreenElement ||
-        (document as any).msFullscreenElement
-      );
-      setIsFullscreen(isFull);
-    };
-    
-    // Listen to all vendor-prefixed events
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
-    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
-    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
-    
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
-      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
-      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
-      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
-    };
-  }, []);
-
   // Auto-hide controls after 3s of no mouse movement
   const resetHideTimer = useCallback(() => {
     setShowControls(true);
@@ -102,51 +59,55 @@ const ScreenShareViewer: React.FC<ScreenShareViewerProps> = ({
     return () => { if (hideTimer.current) clearTimeout(hideTimer.current); };
   }, [resetHideTimer]);
 
-  const toggleFullscreen = useCallback(async (e?: React.MouseEvent) => {
-    // Prevent event from bubbling up
+  // CSS-based fullscreen toggle - just the video, not the whole app
+  const toggleFullscreen = useCallback((e?: React.MouseEvent) => {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
     }
-    
-    try {
-      // In Electron, use the IPC fullscreen API (whole window fullscreen)
-      const electronAPI = (window as any).electronAPI;
-      if (electronAPI?.toggleFullscreen) {
-        const isFull = await electronAPI.toggleFullscreen();
-        setIsFullscreen(isFull);
-        return;
-      }
-      
-      // Fallback for browser - use element fullscreen
-      const container = containerRef.current;
-      if (!container) return;
-      
-      const isCurrentlyFullscreen = !!document.fullscreenElement;
-      
-      if (!isCurrentlyFullscreen) {
-        await container.requestFullscreen();
-      } else {
-        await document.exitFullscreen();
-      }
-    } catch (err: any) {
-      console.error('[Fullscreen] Error:', err);
-    }
+    setIsFullscreen(prev => !prev);
   }, []);
+
+  // Handle Escape key to exit CSS fullscreen
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        setIsFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullscreen]);
+
+  // Container styles - normal or CSS fullscreen
+  const containerStyle: React.CSSProperties = isFullscreen ? {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100vw',
+    height: '100vh',
+    background: '#000',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 99999,
+  } : {
+    position: 'relative',
+    width: '100%',
+    height: '100%',
+    background: '#000',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  };
 
   return (
     <div
       ref={containerRef}
-      style={{
-        position: 'relative',
-        width: '100%',
-        height: '100%',
-        background: '#000',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        overflow: 'hidden',
-      }}
+      style={containerStyle}
       onMouseMove={resetHideTimer}
       onDoubleClick={toggleFullscreen}
     >
@@ -155,7 +116,7 @@ const ScreenShareViewer: React.FC<ScreenShareViewerProps> = ({
         ref={videoRef}
         autoPlay
         playsInline
-        muted={isLocalShare}           // mute local preview to avoid echo
+        muted={isLocalShare}
         style={{
           width: '100%',
           height: '100%',
