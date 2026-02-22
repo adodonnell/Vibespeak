@@ -10,6 +10,9 @@
   --dc-bg-5:  #252A31;   /* inputs / elevated cards */
   --dc-bg-6:  #2B3139;   /* hover on inputs */
 
+  /* Theme tracking */
+  --theme-mode: 'dark';
+
   /* ── Map legacy vars to surface tones ── */
   --background-color:   var(--dc-bg-3);
   --pane-color:         var(--dc-bg-2);
@@ -290,4 +293,95 @@ img, video {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ═════════════════════════════════════════════════════════════════════════
+   LIGHT THEME
+   ═════════════════════════════════════════════════════════════════════════ */
+[data-theme="light"] {
+  /* ── Light surface hierarchy ── */
+  --dc-bg-1:  #E3E5E8;   /* server rail (lightest) */
+  --dc-bg-2:  #F2F3F5;   /* channel pane / member list */
+  --dc-bg-3:  #FFFFFF;   /* main chat area */
+  --dc-bg-4:  #E3E5E8;   /* user panel strip */
+  --dc-bg-5:  #FFFFFF;   /* inputs / elevated cards */
+  --dc-bg-6:  #F2F3F5;   /* hover on inputs */
+
+  /* ── Map legacy vars to surface tones ── */
+  --background-color:   var(--dc-bg-3);
+  --pane-color:         var(--dc-bg-2);
+  --side-pane-color:    var(--dc-bg-1);
+  --bg-base:            var(--dc-bg-1);
+  --bg-primary:         var(--dc-bg-3);
+  --bg-secondary:       var(--dc-bg-2);
+  --bg-tertiary:        var(--dc-bg-4);
+  --channel-bg:         var(--dc-bg-2);
+
+  /* ── Text - dark text for light bg ── */
+  --text-color:    #2E3338;
+  --text-normal:   #2E3338;
+  --content-color: #4F5660;
+  --text-muted:    #747F8D;
+  --text-link:     #0066E0;
+  --side-pane-text-color: #2E3338;
+
+  /* ── Typing indicator ── */
+  --typing-indicator-color:           #2E3338;
+  --typing-indicator-secondary-color: #4F5660;
+
+  /* ── Chat input ── */
+  --chat-input-background-color:              var(--dc-bg-5);
+  --chat-input-background-color-blur-disabled: var(--dc-bg-5);
+  --chat-markup-bar-background-color:          var(--dc-bg-5);
+  --chat-markup-bar-background-color-blur-disabled: var(--dc-bg-5);
+
+  /* ── Message ── */
+  --message-hover-background-color:              rgba(0, 0, 0, 0.04);
+  --message-floating-options-background-color:   #FFFFFF;
+  --header-background-color:                     var(--dc-bg-3);
+  --header-background-color-blur-disabled:       var(--dc-bg-3);
+  --tooltip-background-color:                    #FFFFFF;
+
+  /* ── Markup ── */
+  --markup-code-background-color:          #F2F3F5;
+  --markup-mention-background-color:       rgba(77, 136, 255, 0.15);
+  --markup-mention-background-color-hover: rgba(77, 136, 255, 0.3);
+  --markup-codeblock-background-color:     #E3E5E8;
+  --markup-spoiler-background-color:       #D4D7DC;
+  --markup-spoiler-background-color-hover: #E3E5E8;
+
+  /* ── Drawer ── */
+  --drawer-item-background-color:       rgba(0, 0, 0, 0.04);
+  --drawer-item-hover-background-color: rgba(0, 0, 0, 0.08);
+
+  /* ── Borders / dividers ── */
+  --border-default: rgba(0, 0, 0, 0.08);
+  --border-muted:   rgba(0, 0, 0, 0.04);
+  --divider:        rgba(0, 0, 0, 0.08);
+
+  /* ── Semantic colours (adjusted for light bg) ── */
+  --alert-color-dark:  #FADBD8;
+  --warn-color-dark:   #FCF3CF;
+  --success-color-dark:#D5F4E6;
+
+  /* ── Surface variations ── */
+  --bg-surface:    #F2F3F5;
+  --bg-elevated:   #FFFFFF;
+
+  /* Theme tracking */
+  --theme-mode: 'light';
+}
+
+/* Light theme scrollbar */
+[data-theme="light"] ::-webkit-scrollbar-thumb { 
+  background: rgba(0,0,0,0.15); 
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover { 
+  background: rgba(0,0,0,0.25); 
+}
+
+/* Light theme selection */
+[data-theme="light"] ::selection {
+  background: rgba(77, 136, 255, 0.3);
+  color: #000;
 }

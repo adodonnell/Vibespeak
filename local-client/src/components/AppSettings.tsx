@@ -1,6 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { voiceClient } from '../services/voice-client';
 import { apiClient } from '../services/api-client';
+
+// Theme application helper
+const applyTheme = (theme: 'dark' | 'light') => {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('vibespeak:theme', theme);
+};
+
+// Get initial theme from storage
+const getStoredTheme = (): 'dark' | 'light' => {
+  const stored = localStorage.getItem('vibespeak:theme');
+  return (stored === 'light' || stored === 'dark') ? stored : 'dark';
+};
 
 // Inline notification helpers (replaces deleted notification-service / push-notifications)
 const notificationService = {
@@ -63,9 +75,9 @@ interface AppSettingsPanelProps {
 }
 
 const defaultSettings: AppSettings = {
-  theme: 'dark',
+  theme: getStoredTheme(),
   fontSize: 'medium',
-  appearance: { theme: 'dark', fontSize: 'medium' },
+  appearance: { theme: getStoredTheme(), fontSize: 'medium' },
   notifications: { enabled: true, sound: true, soundVolume: 0.5, desktop: true, mentions: true },
   voice: { inputDevice: 'default', outputDevice: 'default', inputVolume: 1, outputVolume: 1, noiseSuppression: true, echoCancellation: true },
   privacy: { showOnlineStatus: true, allowServerInvites: true },
@@ -453,7 +465,11 @@ const AppSettingsPanel: React.FC<AppSettingsPanelProps> = ({
                 <label style={S.label}>Theme</label>
                 <div style={{ display: 'flex', gap: '12px' }}>
                   {(['dark', 'light'] as const).map(t => (
-                    <button key={t} onClick={() => { handleChange('appearance', 'theme', t); handleChange('', 'theme', t); }}
+                    <button key={t} onClick={() => { 
+                      handleChange('appearance', 'theme', t); 
+                      handleChange('', 'theme', t); 
+                      applyTheme(t);
+                    }}
                       style={{ flex: 1, padding: '18px', background: localSettings.theme === t ? '#5865f2' : '#1e1f22', border: '2px solid', borderColor: localSettings.theme === t ? '#5865f2' : 'transparent', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontSize: '14px' }}>
                       {t === 'dark' ? '🌙 Dark' : '☀️ Light'}
                     </button>

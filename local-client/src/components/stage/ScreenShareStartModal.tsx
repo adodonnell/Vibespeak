@@ -58,36 +58,17 @@ const ScreenShareStartModal: React.FC<Props> = ({
     if (isOpen && isElectron) {
       setIsLoadingSources(true);
       (window as any).electronAPI.getScreenSources()
-        .then((srcs: Array<{ id: string; name: string; thumbnail: { toDataURL: () => string } }>) => {
+        .then((srcs: Array<{ id: string; name: string; thumbnail: { toDataURL: () => string }; type: 'screen' | 'window' }>) => {
           console.log('[ScreenShare] Received', srcs.length, 'sources from Electron');
           
-          // Deduplicate by ID (Electron sometimes returns duplicates)
-          const uniqueMap = new Map<string, { id: string; name: string; thumbnail: { toDataURL: () => string } }>();
-          srcs.forEach(s => {
-            if (!uniqueMap.has(s.id)) {
-              uniqueMap.set(s.id, s);
-            }
-          });
-          
-          const uniqueSrcs = Array.from(uniqueMap.values());
-          console.log('[ScreenShare] After dedup:', uniqueSrcs.length, 'unique sources');
-          
-          // Categorize sources by type
-          const processedSources: ScreenSource[] = uniqueSrcs.map(s => {
-            // Determine type based on name patterns
-            const nameLower = s.name.toLowerCase();
-            const isScreen = nameLower.includes('screen') || 
-                             nameLower.includes('entire') || 
-                             nameLower.includes('monitor') ||
-                             nameLower.includes('display');
-            
-            console.log(`[ScreenShare] Source: "${s.name}" -> ${isScreen ? 'screen' : 'window'}`);
-            
+          // Process sources - type is now provided directly by Electron
+          const processedSources: ScreenSource[] = srcs.map(s => {
+            console.log(`[ScreenShare] Source: "${s.name}" -> ${s.type}`);
             return {
               id: s.id,
               name: s.name,
               thumbnail: s.thumbnail.toDataURL(),
-              type: isScreen ? 'screen' : 'window',
+              type: s.type, // Use the type from Electron directly
             };
           });
           

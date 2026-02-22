@@ -87,7 +87,7 @@ declare global {
       close: () => void;
       pttPressed: () => void;
       pttReleased: () => void;
-      getScreenSources: () => Promise<Array<{ id: string; name: string; thumbnail: { toDataURL: () => string } }>>;
+      getScreenSources: () => Promise<Array<{ id: string; name: string; thumbnail: { toDataURL: () => string }; type: 'screen' | 'window' }>>;
       versions: {
         node: string;
         chrome: string;

@@ -208,24 +208,41 @@ app.whenReady().then(() => {
   // IPC: renderer asks for a list of capturable sources (so it can show a picker)
   ipcMain.handle('get-screen-sources', async () => {
     try {
-      const sources = await desktopCapturer.getSources({ 
-        types: ['screen', 'window'],
-        thumbnailSize: { width: 320, height: 180 } // Consistent thumbnail size
-      });
+      // Get screens and windows separately to properly identify them
+      const [screens, windows] = await Promise.all([
+        desktopCapturer.getSources({ 
+          types: ['screen'],
+          thumbnailSize: { width: 320, height: 180 }
+        }),
+        desktopCapturer.getSources({ 
+          types: ['window'],
+          thumbnailSize: { width: 320, height: 180 }
+        })
+      ]);
       
-      // Deduplicate by name and type (some systems report duplicates)
-      const seen = new Set<string>();
-      const deduped = sources.filter(source => {
-        const key = `${source.name}-${source.display_id || source.id}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
+      // Tag each source with its type
+      const screenSources = screens.map(s => ({
+        id: s.id,
+        name: s.name || 'Screen',
+        thumbnail: s.thumbnail,
+        type: 'screen' as const
+      }));
       
-      console.log('[Electron] getScreenSources:', deduped.length, 'sources');
-      deduped.forEach(s => console.log(`  - [${s.id.slice(0, 8)}] ${s.name}`));
+      const windowSources = windows.map(s => ({
+        id: s.id,
+        name: s.name || 'Window',
+        thumbnail: s.thumbnail,
+        type: 'window' as const
+      }));
       
-      return deduped;
+      // Combine: screens first, then windows
+      const allSources = [...screenSources, ...windowSources];
+      
+      console.log('[Electron] getScreenSources:', allSources.length, 'sources');
+      console.log(`  - ${screenSources.length} screens, ${windowSources.length} windows`);
+      allSources.forEach(s => console.log(`  - [${s.type}] ${s.name}`));
+      
+      return allSources;
     } catch (err) {
       console.error('[Electron] getScreenSources error:', err);
       return [];
