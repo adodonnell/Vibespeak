@@ -225,7 +225,8 @@ const ScreenShareViewer: React.FC<ScreenShareViewerProps> = ({
       }}>
         {/* Fullscreen toggle */}
         <button
-          onClick={toggleFullscreen}
+          onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
+          onDoubleClick={(e) => e.stopPropagation()}
           title={isFullscreen ? 'Exit fullscreen (or press Escape)' : 'Fullscreen (or double-click)'}
           style={controlBtn}
         >
