@@ -71,6 +71,9 @@ class RealtimeClient {
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
   private isConnected = false;
+  private isAuthenticated = false;
+  private authToken: string | null = null;
+  private pendingMessages: WsMessage[] = [];
   /** Set to true before calling ws.close() to suppress auto-reconnect */
   private intentionalDisconnect = false;
   private messageHandlers: Set<MessageHandler> = new Set();
@@ -89,6 +92,85 @@ class RealtimeClient {
   constructor() {
     // URL is computed fresh on each connect() call from localStorage / env
     this.url = 'ws://localhost:3002';
+    
+    // Load auth token from localStorage if available
+    try {
+      this.authToken = localStorage.getItem('disorder:token');
+    } catch { /* localStorage unavailable */ }
+    
+    // Log security status on construction
+    if (import.meta.env.DEV) {
+      console.log('[WebSocket] Security mode:', this.isSecureContext() ? 'Secure (WSS)' : 'Insecure (WS)');
+    }
+  }
+
+  /**
+   * Check if we're in a secure context (HTTPS/WSS)
+   * Browsers require secure contexts for some features and show security indicators
+   */
+  private isSecureContext(): boolean {
+    // Check if page is served over HTTPS
+    if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+      return true;
+    }
+    // Check if we're using WSS URL
+    return this.url.startsWith('wss://');
+  }
+
+  /**
+   * Determine the best WebSocket URL based on environment.
+   * Prioritizes WSS for secure connections in production.
+   */
+  private computeWebSocketUrl(): string {
+    let wsUrl: string;
+    
+    try {
+      // 1. Check localStorage for explicit URL (set by ServerSetupScreen)
+      wsUrl = localStorage.getItem('disorder:ws-url') || '';
+    } catch {
+      wsUrl = '';
+    }
+    
+    // 2. Fall back to environment variable
+    if (!wsUrl) {
+      wsUrl = (import.meta.env.VITE_WS_URL as string | undefined) || '';
+    }
+    
+    // 3. Auto-upgrade to WSS if on HTTPS page
+    if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+      if (wsUrl.startsWith('ws://')) {
+        wsUrl = wsUrl.replace('ws://', 'wss://');
+        console.log('[WebSocket] Auto-upgraded to WSS for secure context');
+      }
+    }
+    
+    // 4. Default to localhost
+    if (!wsUrl) {
+      // Use WSS if on HTTPS, otherwise WS
+      const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' 
+        ? 'wss' 
+        : 'ws';
+      wsUrl = `${protocol}://localhost:3002`;
+    }
+    
+    return wsUrl;
+  }
+
+  /**
+   * Set the authentication token for WebSocket connections.
+   * Must be called before connect() or the connection will be rejected.
+   */
+  setAuthToken(token: string | null): void {
+    this.authToken = token;
+    if (token) {
+      try {
+        localStorage.setItem('disorder:token', token);
+      } catch { /* localStorage unavailable */ }
+    } else {
+      try {
+        localStorage.removeItem('disorder:token');
+      } catch { /* localStorage unavailable */ }
+    }
   }
 
   /**
@@ -125,17 +207,23 @@ class RealtimeClient {
       }
 
       this.ws.onopen = () => {
-        console.log('[WebSocket] Connected');
+        console.log('[WebSocket] Connected, sending auth...');
         this.isConnected = true;
         this.reconnectAttempts = 0;
 
-        // Always join the global room so we receive voice updates + broadcasts
-        this.joinRoom('global', username);
-
-        // Flush any rooms that were requested while we were still connecting
-        const pending = this.pendingRoomJoins.splice(0);
-        for (const roomId of pending) {
-          this.joinRoom(roomId);
+        // Send authentication first - server requires this before any other messages
+        if (this.authToken) {
+          this.sendRaw({ type: 'auth', token: this.authToken });
+        } else {
+          console.warn('[WebSocket] No auth token available - connection may be rejected');
+          // Try to get token from localStorage (set by AuthContext after login)
+          try {
+            const storedToken = localStorage.getItem('disorder:token');
+            if (storedToken) {
+              this.authToken = storedToken;
+              this.sendRaw({ type: 'auth', token: storedToken });
+            }
+          } catch { /* localStorage unavailable */ }
         }
 
         resolve(this.clientId ?? '');
@@ -307,7 +395,49 @@ class RealtimeClient {
 
   // ─── Private ────────────────────────────────────────────────────────────────
 
+  /**
+   * Send a raw message without authentication check (used for auth itself).
+   */
+  private sendRaw(message: object): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(message));
+    }
+  }
+
   private handleMessage(message: WsMessage): void {
+    // Handle auth responses first
+    if (message.type === 'auth-success') {
+      this.isAuthenticated = true;
+      console.log('[WebSocket] Authenticated successfully');
+      
+      // Now join the global room and flush pending rooms
+      this.joinRoom('global', this.username || undefined);
+      const pending = this.pendingRoomJoins.splice(0);
+      for (const roomId of pending) {
+        this.joinRoom(roomId);
+      }
+      
+      // Flush any pending messages
+      for (const msg of this.pendingMessages) {
+        this.ws?.send(JSON.stringify(msg));
+      }
+      this.pendingMessages = [];
+      return;
+    }
+
+    if (message.type === 'auth-failed' || message.type === 'auth-required') {
+      console.error('[WebSocket] Authentication failed:', message);
+      this.isAuthenticated = false;
+      // The server will close the connection
+      return;
+    }
+
+    // For other messages, check if authenticated
+    if (!this.isAuthenticated) {
+      console.warn('[WebSocket] Received message before auth:', message.type);
+      return;
+    }
+
     switch (message.type) {
       case 'new-message':
         if (message.data) {

@@ -31,6 +31,12 @@ interface OnlineMember {
   inVoiceChannel?: string;
 }
 
+interface ScreenShareInfo {
+  stream: MediaStream;
+  presenterName: string;
+  isLocal: boolean;
+}
+
 interface StageProps {
   viewMode: 'voice' | 'text';
   channelName: string;
@@ -47,10 +53,11 @@ interface StageProps {
   onPinboardToggle?: () => void;
   isPinboardOpen?: boolean;
   onlineUsers?: OnlineMember[];
-  // Screen share
+  // Screen share - support multiple simultaneous shares
   screenShareStream?: MediaStream | null;
   screenSharePresenter?: string;
   isLocalScreenShare?: boolean;
+  screenShares?: Map<string, ScreenShareInfo>; // New: multiple shares support
   onStartScreenShare?: () => void;
   onStopScreenShare?: () => void;
 }
@@ -62,6 +69,262 @@ interface LiveBannerProps {
   onWatch: () => void;
 }
 
+// ─── Video component that handles srcObject via ref ───────────────────────────
+interface VideoPlayerProps {
+  stream: MediaStream;
+  style?: React.CSSProperties;
+  className?: string;
+}
+
+const VideoPlayer: React.FC<VideoPlayerProps> = ({ stream, style, className }) => {
+  const videoRef = React.useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+    }
+  }, [stream]);
+
+  return (
+    <video
+      ref={videoRef}
+      autoPlay
+      muted
+      playsInline
+      style={style}
+      className={className}
+    />
+  );
+};
+
+// ─── Multi-Stream Grid View Component ─────────────────────────────────────────
+interface ScreenShareGridProps {
+  shares: Map<string, ScreenShareInfo>;
+  onStopSharing?: () => void;
+  currentUsername: string;
+  channelName: string;
+  isGridView: boolean;
+  onToggleGridView: () => void;
+  focusedShareId: string | null;
+  onFocusShare: (id: string | null) => void;
+}
+
+const ScreenShareGrid: React.FC<ScreenShareGridProps> = ({
+  shares,
+  onStopSharing,
+  currentUsername,
+  channelName,
+  isGridView,
+  onToggleGridView,
+  focusedShareId,
+  onFocusShare,
+}) => {
+  const sharesArray = Array.from(shares.entries());
+  const count = sharesArray.length;
+
+  if (count === 0) return null;
+
+  // Single stream - full size
+  if (count === 1) {
+    const [id, info] = sharesArray[0];
+    return (
+      <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+        <ScreenShareViewer
+          stream={info.stream}
+          presenterName={info.isLocal ? currentUsername : info.presenterName}
+          isLocalShare={info.isLocal}
+          onStopSharing={info.isLocal ? onStopSharing : undefined}
+          channelName={channelName}
+        />
+      </div>
+    );
+  }
+
+  // Focused view - one large, others as thumbnails
+  if (focusedShareId && shares.has(focusedShareId)) {
+    const focusedShare = shares.get(focusedShareId)!;
+    const others = sharesArray.filter(([id]) => id !== focusedShareId);
+
+    return (
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8, padding: 8 }}>
+        {/* Main focused view */}
+        <div style={{ flex: 1, minHeight: 0, position: 'relative', borderRadius: 8, overflow: 'hidden' }}>
+          <ScreenShareViewer
+            stream={focusedShare.stream}
+            presenterName={focusedShare.isLocal ? currentUsername : focusedShare.presenterName}
+            isLocalShare={focusedShare.isLocal}
+            onStopSharing={focusedShare.isLocal ? onStopSharing : undefined}
+            channelName={channelName}
+          />
+        </div>
+        
+        {/* Thumbnail strip */}
+        <div style={{
+          display: 'flex',
+          gap: 8,
+          height: 100,
+          padding: '4px 0',
+          overflowX: 'auto',
+        }}>
+          {others.map(([id, info]) => (
+            <div
+              key={id}
+              onClick={() => onFocusShare(id)}
+              style={{
+                width: 160,
+                height: 100,
+                flexShrink: 0,
+                borderRadius: 6,
+                overflow: 'hidden',
+                cursor: 'pointer',
+                border: '2px solid transparent',
+                transition: 'border-color 0.2s',
+              }}
+            >
+              <div style={{
+                position: 'relative',
+                width: '100%',
+                height: '100%',
+                background: '#1a1b1e',
+              }}>
+                <VideoPlayer
+                  stream={info.stream}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                  }}
+                />
+                <div style={{
+                  position: 'absolute',
+                  bottom: 4,
+                  left: 4,
+                  padding: '2px 6px',
+                  background: 'rgba(0,0,0,0.7)',
+                  borderRadius: 4,
+                  fontSize: 10,
+                  color: '#fff',
+                }}>
+                  {info.presenterName}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Grid view for 2+ streams
+  const getGridStyle = (): React.CSSProperties => {
+    const cols = count <= 2 ? 2 : count <= 4 ? 2 : 3;
+    return {
+      display: 'grid',
+      gridTemplateColumns: `repeat(${cols}, 1fr)`,
+      gap: 8,
+      padding: 8,
+      flex: 1,
+      minHeight: 0,
+    };
+  };
+
+  return (
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      {/* Grid controls */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '8px 12px',
+        borderBottom: '1px solid rgba(255,255,255,0.06)',
+      }}>
+        <span style={{ fontSize: 12, color: '#949ba4' }}>
+          📺 {count} screen shares
+        </span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={() => onFocusShare(null)}
+            style={{
+              padding: '4px 8px',
+              background: isGridView ? '#5865f2' : 'rgba(88,101,242,0.2)',
+              border: 'none',
+              borderRadius: 4,
+              color: '#fff',
+              fontSize: 11,
+              cursor: 'pointer',
+            }}
+          >
+            Grid
+          </button>
+          <button
+            onClick={() => onFocusShare(sharesArray[0][0])}
+            style={{
+              padding: '4px 8px',
+              background: 'rgba(255,255,255,0.1)',
+              border: 'none',
+              borderRadius: 4,
+              color: '#fff',
+              fontSize: 11,
+              cursor: 'pointer',
+            }}
+          >
+            Focus
+          </button>
+        </div>
+      </div>
+
+      {/* Grid content */}
+      <div style={getGridStyle()}>
+        {sharesArray.map(([id, info]) => (
+          <div
+            key={id}
+            onClick={() => onFocusShare(id)}
+            style={{
+              position: 'relative',
+              borderRadius: 8,
+              overflow: 'hidden',
+              background: '#1a1b1e',
+              cursor: 'pointer',
+              minHeight: 150,
+            }}
+          >
+            <VideoPlayer
+              stream={info.stream}
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+              }}
+            />
+            <div style={{
+              position: 'absolute',
+              top: 8,
+              left: 8,
+              padding: '4px 8px',
+              background: 'rgba(0,0,0,0.7)',
+              borderRadius: 4,
+              fontSize: 11,
+              color: '#fff',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+            }}>
+              <span style={{
+                background: info.isLocal ? '#3ba55c' : '#ed4245',
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+              }} />
+              {info.isLocal ? 'You' : info.presenterName}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// ─── Live Banner (single stream notification) ─────────────────────────────────
 const LiveBanner: React.FC<LiveBannerProps> = ({ presenterName, channelName, onWatch }) => (
   <div style={{
     margin: '8px 12px',
@@ -159,6 +422,9 @@ const Stage: React.FC<StageProps> = ({
 
   // Per-viewer opt-in: false = see the notification banner, true = watching the stream
   const [isWatchingStream, setIsWatchingStream] = useState(false);
+  
+  // Grid view for multiple streams
+  const [isGridView, setIsGridView] = useState(false);
 
   // Reset watch state when the stream ends
   useEffect(() => {
@@ -173,6 +439,12 @@ const Stage: React.FC<StageProps> = ({
       setIsWatchingStream(true);
     }
   }, [isLocalScreenShare, screenShareStream]);
+
+  // Auto-enable grid view when multiple streams are available
+  useEffect(() => {
+    // This would be triggered by the parent component when multiple screenShares are detected
+    // For now, we'll add a button to toggle grid view manually
+  }, []);
 
   // Member list helpers
   const voiceChannelMembers = voiceUsers.map(u => ({

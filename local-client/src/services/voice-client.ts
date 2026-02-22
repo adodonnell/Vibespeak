@@ -38,6 +38,7 @@ export interface AudioSettings {
   opusFrameSize: 20 | 40 | 60; // ms per frame
   enableStereo: boolean;
   enableDtx: boolean; // Discontinuous transmission
+  enableFec: boolean; // Forward Error Correction for packet loss
   
   // Audio processing (new)
   enableNoiseGate: boolean;
@@ -69,6 +70,7 @@ export const defaultAudioSettings: AudioSettings = {
   opusFrameSize: 20, // Lower = less latency
   enableStereo: false,
   enableDtx: true, // Save bandwidth when not speaking
+  enableFec: true, // Forward Error Correction for packet loss recovery
   
   // Audio processing defaults
   enableNoiseGate: true,
@@ -177,6 +179,19 @@ export class VoiceClient {
   private onScreenShareStartHandlers: ((stream: MediaStream) => void)[] = [];
   private onScreenShareStopHandlers: (() => void)[] = [];
   private onIncomingScreenShareHandlers: ((userId: string, stream: MediaStream) => void)[] = [];
+  
+  // Bandwidth management
+  private bandwidthMonitorInterval: ReturnType<typeof setInterval> | null = null;
+  private currentBandwidth: number = 0; // bytes per second
+  private availableOutgoingBitrate: number = 0;
+  private screenShareQuality: '1080p60' | '1080p30' | '720p60' | '720p30' | '480p30' = '1080p60';
+  private bandwidthHistory: number[] = [];
+  private readonly BANDWIDTH_HISTORY_SIZE = 10;
+  private readonly LOW_BANDWIDTH_THRESHOLD = 1500000; // 1.5 Mbps
+  private readonly VERY_LOW_BANDWIDTH_THRESHOLD = 800000; // 800 Kbps
+  
+  // Screen share senders for renegotiation
+  private screenShareSenders: Map<string, RTCRtpSender> = new Map();
 
   // Auto-reconnect state
   private reconnectAttempts: number = 0;
@@ -650,6 +665,12 @@ export class VoiceClient {
     // If initiator, create offer
     if (initiator) {
       const offer = await pc.createOffer();
+      
+      // Apply Opus codec settings (FEC, stereo, bitrate) via SDP munging
+      if (offer.sdp) {
+        offer.sdp = this.applyOpusCodecSettings(offer.sdp);
+      }
+      
       await pc.setLocalDescription(offer);
       this.ws?.send(JSON.stringify({
         type: 'offer',
@@ -657,6 +678,135 @@ export class VoiceClient {
         data: offer,
       }));
     }
+  }
+
+  /**
+   * Apply Opus codec settings to SDP for FEC, stereo, bitrate, etc.
+   * This enables Forward Error Correction which helps recover from packet loss.
+   */
+  private applyOpusCodecSettings(sdp: string): string {
+    // Parse SDP and modify Opus fmtp line
+    const lines = sdp.split('\n');
+    const modifiedLines: string[] = [];
+    
+    for (const line of lines) {
+      // Find the Opus fmtp line and append our parameters
+      if (line.startsWith('a=fmtp:111') || line.includes('opus/48000')) {
+        // Opus format parameters - add FEC if enabled
+        const params: string[] = [];
+        
+        if (this.audioSettings.enableFec) {
+          params.push('useinbandfec=1');
+        }
+        
+        if (this.audioSettings.enableDtx) {
+          params.push('usedtx=1');
+        }
+        
+        if (this.audioSettings.enableStereo) {
+          params.push('stereo=1');
+        } else {
+          params.push('stereo=0');
+        }
+        
+        // Add bitrate setting
+        params.push(`maxaveragebitrate=${this.audioSettings.opusBitrate}`);
+        
+        // Append parameters to existing line or create new one
+        if (line.includes(';')) {
+          // Already has parameters, append ours
+          modifiedLines.push(`${line};${params.join(';')}`);
+        } else if (line.startsWith('a=rtpmap:')) {
+          // rtpmap line, keep as is (fmtp will be added separately)
+          modifiedLines.push(line);
+        } else {
+          // fmtp line without parameters
+          modifiedLines.push(`${line};${params.join(';')}`);
+        }
+      } else if (line.startsWith('a=rtpmap:111')) {
+        // Keep the rtpmap line for Opus
+        modifiedLines.push(line);
+      } else {
+        modifiedLines.push(line);
+      }
+    }
+    
+    return modifiedLines.join('\n');
+  }
+
+  /**
+   * Apply video codec settings to SDP for screen sharing.
+   * Prioritizes VP9 for better screen share quality, with fallback to VP8.
+   */
+  private applyVideoCodecSettings(sdp: string): string {
+    // For screen sharing, we want to:
+    // 1. Prioritize VP9 if available (better for screen content)
+    // 2. Set appropriate bitrate for screen share
+    // 3. Enable screen content extensions if available
+    
+    const lines = sdp.split('\n');
+    const modifiedLines: string[] = [];
+    
+    // Find video codecs and their payload types
+    let vp9PayloadType: string | null = null;
+    let vp8PayloadType: string | null = null;
+    let h264PayloadType: string | null = null;
+    
+    for (const line of lines) {
+      // Extract payload types for video codecs
+      if (line.startsWith('a=rtpmap:') && line.includes('VP9')) {
+        vp9PayloadType = line.substring(9).split(' ')[0];
+      } else if (line.startsWith('a=rtpmap:') && line.includes('VP8')) {
+        vp8PayloadType = line.substring(9).split(' ')[0];
+      } else if (line.startsWith('a=rtpmap:') && line.includes('H264')) {
+        h264PayloadType = line.substring(9).split(' ')[0];
+      }
+    }
+    
+    // Reorder codecs in m= line to prefer VP9, then VP8, then H264
+    for (const line of lines) {
+      if (line.startsWith('m=video') && (vp9PayloadType || vp8PayloadType)) {
+        // Parse existing payload types
+        const parts = line.split(' ');
+        const payloadTypes = parts.slice(3);
+        
+        // Reorder: VP9 first, then VP8, then H264, then others
+        const reordered: string[] = [];
+        const added = new Set<string>();
+        
+        // Add VP9 first (best for screen share)
+        if (vp9PayloadType && payloadTypes.includes(vp9PayloadType)) {
+          reordered.push(vp9PayloadType);
+          added.add(vp9PayloadType);
+        }
+        
+        // Then VP8
+        if (vp8PayloadType && payloadTypes.includes(vp8PayloadType) && !added.has(vp8PayloadType)) {
+          reordered.push(vp8PayloadType);
+          added.add(vp8PayloadType);
+        }
+        
+        // Then H264
+        if (h264PayloadType && payloadTypes.includes(h264PayloadType) && !added.has(h264PayloadType)) {
+          reordered.push(h264PayloadType);
+          added.add(h264PayloadType);
+        }
+        
+        // Then add any remaining codecs
+        for (const pt of payloadTypes) {
+          if (!added.has(pt)) {
+            reordered.push(pt);
+          }
+        }
+        
+        // Reconstruct the m= line
+        modifiedLines.push(`${parts[0]} ${parts[1]} ${parts[2]} ${reordered.join(' ')}`);
+      } else {
+        modifiedLines.push(line);
+      }
+    }
+    
+    return modifiedLines.join('\n');
   }
 
   private async handleOffer(peerId: string, offer: RTCSessionDescriptionInit): Promise<void> {
@@ -1381,9 +1531,51 @@ export class VoiceClient {
     // Add the video track to all existing peer connections so remote peers see it
     const videoTrack = this.screenStream.getVideoTracks()[0];
     if (videoTrack) {
-      this.peers.forEach((pc) => {
+      // ============================================
+      // WEBRTC RENEGOTIATION FOR SCREEN SHARE
+      // ============================================
+      // When adding a new track (video) to an existing connection,
+      // we need to create a new offer and exchange SDP with remote peers.
+      // This is called "renegotiation".
+      
+      this.peers.forEach(async (pc, peerId) => {
         try {
-          pc.addTrack(videoTrack, this.screenStream!);
+          // Add the video track to the connection
+          const sender = pc.addTrack(videoTrack, this.screenStream!);
+          
+          // Store sender reference for later removal
+          if (!this.screenShareSenders) {
+            this.screenShareSenders = new Map();
+          }
+          this.screenShareSenders.set(peerId, sender);
+          
+          // Check if we need to renegotiate
+          // If we're already in a stable state, we initiate the renegotiation
+          if (pc.signalingState === 'stable') {
+            console.log('[Voice] Initiating renegotiation for screen share with peer:', peerId);
+            
+            // Create a new offer that includes the video track
+            const offer = await pc.createOffer();
+            
+            // Apply Opus codec settings to the offer
+            if (offer.sdp) {
+              offer.sdp = this.applyOpusCodecSettings(offer.sdp);
+              // Also apply video codec preferences for screen share
+              offer.sdp = this.applyVideoCodecSettings(offer.sdp);
+            }
+            
+            await pc.setLocalDescription(offer);
+            
+            // Send the new offer via WebSocket signaling
+            this.ws?.send(JSON.stringify({
+              type: 'offer',
+              to: peerId,
+              data: offer,
+              isScreenShare: true,  // Flag to indicate this is a screen share renegotiation
+            }));
+            
+            console.log('[Voice] Sent renegotiation offer to peer:', peerId);
+          }
         } catch (err) {
           console.warn('[Voice] Could not add screen track to peer:', err);
         }
@@ -1400,6 +1592,10 @@ export class VoiceClient {
 
     // Send screen share notification to server
     this.sendScreenShareToServer(true);
+
+    // Start bandwidth monitoring for adaptive quality
+    this.startBandwidthMonitoring();
+    this.screenShareQuality = quality;
 
     return this.screenStream;
   }
@@ -1476,11 +1672,19 @@ export class VoiceClient {
 
   // Stop screen share
   stopScreenShare(): void {
+    // Stop bandwidth monitoring
+    this.stopBandwidthMonitoring();
+
     if (this.screenStream) {
       this.screenStream.getTracks().forEach(track => track.stop());
       this.screenStream = null;
     }
     this.isScreenSharing = false;
+
+    // Reset quality to default for next share
+    this.screenShareQuality = '1080p60';
+    this.bandwidthHistory = [];
+    this.lastVideoStats = null;
 
     // Notify handlers
     this.onScreenShareStopHandlers.forEach(handler => handler());
@@ -1545,6 +1749,211 @@ export class VoiceClient {
 
   onIncomingScreenShare(handler: (userId: string, stream: MediaStream) => void): void {
     this.onIncomingScreenShareHandlers.push(handler);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // BANDWIDTH MANAGEMENT
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Start monitoring bandwidth for adaptive quality.
+   * Call this when screen sharing starts.
+   */
+  startBandwidthMonitoring(): void {
+    if (this.bandwidthMonitorInterval) {
+      clearInterval(this.bandwidthMonitorInterval);
+    }
+
+    this.bandwidthMonitorInterval = setInterval(() => {
+      this.measureBandwidth();
+    }, 2000); // Check every 2 seconds
+
+    console.log('[Voice] Bandwidth monitoring started');
+  }
+
+  /**
+   * Stop bandwidth monitoring.
+   */
+  stopBandwidthMonitoring(): void {
+    if (this.bandwidthMonitorInterval) {
+      clearInterval(this.bandwidthMonitorInterval);
+      this.bandwidthMonitorInterval = null;
+    }
+    this.bandwidthHistory = [];
+    console.log('[Voice] Bandwidth monitoring stopped');
+  }
+
+  /**
+   * Measure current bandwidth using WebRTC stats.
+   */
+  private async measureBandwidth(): Promise<void> {
+    let totalBitrate = 0;
+    let totalAvailable = 0;
+
+    for (const pc of this.peers.values()) {
+      try {
+        const stats = await pc.getStats();
+        stats.forEach((report) => {
+          if (report.type === 'outbound-rtp' && report.kind === 'video') {
+            // Calculate bitrate from bytes sent
+            const bytesSent = report.bytesSent || 0;
+            const timestamp = report.timestamp || Date.now();
+            
+            // Store for next calculation
+            if (this.lastVideoStats) {
+              const timeDiff = (timestamp - this.lastVideoStats.timestamp) / 1000;
+              const bytesDiff = bytesSent - this.lastVideoStats.bytesSent;
+              totalBitrate = (bytesDiff * 8) / timeDiff; // bits per second
+            }
+            
+            this.lastVideoStats = { bytesSent, timestamp };
+          }
+          
+          if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+            totalAvailable = report.availableOutgoingBitrate || 0;
+          }
+        });
+      } catch (err) {
+        console.warn('[Voice] Error getting stats for bandwidth:', err);
+      }
+    }
+
+    this.currentBandwidth = totalBitrate;
+    this.availableOutgoingBitrate = totalAvailable;
+
+    // Add to history for averaging
+    this.bandwidthHistory.push(totalAvailable);
+    if (this.bandwidthHistory.length > this.BANDWIDTH_HISTORY_SIZE) {
+      this.bandwidthHistory.shift();
+    }
+
+    // Check if we need to adapt quality
+    this.adaptScreenShareQuality();
+  }
+
+  private lastVideoStats: { bytesSent: number; timestamp: number } | null = null;
+
+  /**
+   * Adapt screen share quality based on available bandwidth.
+   */
+  private adaptScreenShareQuality(): void {
+    if (!this.isScreenSharing || !this.screenStream) return;
+
+    // Calculate average bandwidth from history
+    const avgBandwidth = this.bandwidthHistory.length > 0
+      ? this.bandwidthHistory.reduce((a, b) => a + b, 0) / this.bandwidthHistory.length
+      : this.availableOutgoingBitrate;
+
+    // Determine optimal quality based on bandwidth
+    const currentQuality = this.screenShareQuality;
+    let newQuality: typeof this.screenShareQuality;
+
+    if (avgBandwidth < this.VERY_LOW_BANDWIDTH_THRESHOLD) {
+      // Very low bandwidth - drop to 480p
+      newQuality = '480p30';
+    } else if (avgBandwidth < this.LOW_BANDWIDTH_THRESHOLD) {
+      // Low bandwidth - 720p30
+      newQuality = '720p30';
+    } else if (avgBandwidth < 3000000) {
+      // Medium bandwidth - 720p60 or 1080p30
+      newQuality = currentQuality.includes('60') ? '720p60' : '1080p30';
+    } else if (avgBandwidth < 5000000) {
+      // Good bandwidth - 1080p30
+      newQuality = '1080p30';
+    } else {
+      // Excellent bandwidth - 1080p60
+      newQuality = '1080p60';
+    }
+
+    // Only change if different and not changing too frequently
+    if (newQuality !== currentQuality) {
+      console.log(`[Voice] Adapting screen share quality: ${currentQuality} -> ${newQuality} (bandwidth: ${(avgBandwidth / 1000000).toFixed(2)} Mbps)`);
+      this.applyScreenShareQuality(newQuality);
+    }
+  }
+
+  /**
+   * Apply new quality settings to the screen share stream.
+   */
+  private async applyScreenShareQuality(quality: typeof this.screenShareQuality): Promise<void> {
+    if (!this.screenStream) return;
+
+    const videoTrack = this.screenStream.getVideoTracks()[0];
+    if (!videoTrack) return;
+
+    const constraints: MediaTrackConstraints = {};
+
+    switch (quality) {
+      case '1080p60':
+        constraints.width = { ideal: 1920 };
+        constraints.height = { ideal: 1080 };
+        constraints.frameRate = { ideal: 60, max: 60 };
+        break;
+      case '1080p30':
+        constraints.width = { ideal: 1920 };
+        constraints.height = { ideal: 1080 };
+        constraints.frameRate = { ideal: 30, max: 30 };
+        break;
+      case '720p60':
+        constraints.width = { ideal: 1280 };
+        constraints.height = { ideal: 720 };
+        constraints.frameRate = { ideal: 60, max: 60 };
+        break;
+      case '720p30':
+        constraints.width = { ideal: 1280 };
+        constraints.height = { ideal: 720 };
+        constraints.frameRate = { ideal: 30, max: 30 };
+        break;
+      case '480p30':
+        constraints.width = { ideal: 854 };
+        constraints.height = { ideal: 480 };
+        constraints.frameRate = { ideal: 30, max: 30 };
+        break;
+    }
+
+    try {
+      await videoTrack.applyConstraints(constraints);
+      this.screenShareQuality = quality;
+      console.log('[Voice] Screen share quality applied:', quality);
+    } catch (err) {
+      console.warn('[Voice] Failed to apply quality constraints:', err);
+    }
+  }
+
+  /**
+   * Get current bandwidth stats for UI display.
+   */
+  getBandwidthStats(): {
+    currentBitrate: number;
+    availableBandwidth: number;
+    quality: string;
+    isLowBandwidth: boolean;
+  } {
+    const avgBandwidth = this.bandwidthHistory.length > 0
+      ? this.bandwidthHistory.reduce((a, b) => a + b, 0) / this.bandwidthHistory.length
+      : this.availableOutgoingBitrate;
+
+    return {
+      currentBitrate: this.currentBandwidth,
+      availableBandwidth: avgBandwidth,
+      quality: this.screenShareQuality,
+      isLowBandwidth: avgBandwidth < this.LOW_BANDWIDTH_THRESHOLD,
+    };
+  }
+
+  /**
+   * Get current screen share quality.
+   */
+  getScreenShareQuality(): string {
+    return this.screenShareQuality;
+  }
+
+  /**
+   * Manually set screen share quality (overrides auto-adaptation).
+   */
+  async setScreenShareQuality(quality: typeof this.screenShareQuality): Promise<void> {
+    this.screenShareQuality = quality;
+    await this.applyScreenShareQuality(quality);
   }
 }
 

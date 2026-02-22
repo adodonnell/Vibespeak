@@ -1,9 +1,13 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { logger } from './utils/logger.js';
 import { userService } from './api/users.js';
+import { verifyToken } from './auth.js';
+import { createSecureContext } from 'tls';
+import { readFileSync, existsSync } from 'fs';
 
 interface SignalingMessage {
-  type: 'offer' | 'answer' | 'ice-candidate' | 'join' | 'leave' | 'user-joined' | 'user-left' | 'ping' | 'pong' | 'new-message' | 'message-updated' | 'message-deleted' | 'typing-start' | 'typing-stop' | 'screen-share-start' | 'screen-share-stop';
+  type: 'auth' | 'offer' | 'answer' | 'ice-candidate' | 'join' | 'leave' | 'user-joined' | 'user-left' | 'ping' | 'pong' | 'new-message' | 'message-updated' | 'message-deleted' | 'typing-start' | 'typing-stop' | 'screen-share-start' | 'screen-share-stop';
+  token?: string;  // JWT token for authentication
   from?: string;
   to?: string;
   roomId?: string;
@@ -37,10 +41,12 @@ export class SignalingServer {
   private clientIds: Map<WebSocket, string> = new Map();
   private clientUsernames: Map<WebSocket, string> = new Map(); // Track usernames
   private clientUserIds: Map<WebSocket, number> = new Map(); // Track database user IDs for presence
+  private clientAuthenticated: Map<WebSocket, boolean> = new Map(); // Track auth status
   private pingIntervals: Map<WebSocket, NodeJS.Timeout> = new Map();
   private pingTimeouts: Map<WebSocket, NodeJS.Timeout> = new Map();
   private readonly PING_INTERVAL = 30000; // 30 seconds
   private readonly PING_TIMEOUT = 5000; // 5 seconds
+  private readonly AUTH_TIMEOUT = 10000; // 10 seconds to authenticate after connection
 
   start(port: number = 3002): void {
     this.wss = new WebSocketServer({ port });
@@ -66,7 +72,20 @@ export class SignalingServer {
     this.wss.on('connection', (ws: WebSocket) => {
       const clientId = generateClientId();
       this.clientIds.set(ws, clientId);
+      this.clientAuthenticated.set(ws, false); // Start as unauthenticated
       logger.info(`Client connected: ${clientId}`);
+
+      // Set auth timeout - disconnect if not authenticated within timeout period
+      const authTimeout = setTimeout(() => {
+        if (!this.clientAuthenticated.get(ws)) {
+          logger.warn(`Client ${clientId} failed to authenticate within ${this.AUTH_TIMEOUT}ms, disconnecting`);
+          ws.send(JSON.stringify({ type: 'auth-required', error: 'Authentication required' }));
+          ws.close(4001, 'Authentication timeout');
+        }
+      }, this.AUTH_TIMEOUT);
+
+      // Store timeout so we can clear it on auth success
+      ws.once('close', () => clearTimeout(authTimeout));
 
       // Start heartbeat for this connection
       this.startHeartbeat(ws);
@@ -152,8 +171,78 @@ export class SignalingServer {
     this.clearPingTimeout(ws);
   }
 
+  /**
+   * Handle authentication message - validates JWT token and marks client as authenticated.
+   * This is the ONLY message type allowed before authentication is complete.
+   */
+  private handleAuth(ws: WebSocket, message: SignalingMessage): void {
+    const clientId = this.clientIds.get(ws);
+
+    // Check if token is provided
+    if (!message.token) {
+      logger.warn(`Client ${clientId} attempted auth without token`);
+      ws.send(JSON.stringify({ type: 'auth-failed', error: 'Token required' }));
+      ws.close(4002, 'Token required');
+      return;
+    }
+
+    // Verify the JWT token
+    const user = verifyToken(message.token);
+    if (!user) {
+      logger.warn(`Client ${clientId} provided invalid token`);
+      ws.send(JSON.stringify({ type: 'auth-failed', error: 'Invalid or expired token' }));
+      ws.close(4003, 'Invalid token');
+      return;
+    }
+
+    // Mark as authenticated and store user info
+    this.clientAuthenticated.set(ws, true);
+    this.clientUsernames.set(ws, user.username);
+    if (user.id) {
+      this.clientUserIds.set(ws, user.id);
+    }
+
+    logger.info(`Client ${clientId} authenticated as user ${user.username} (id: ${user.id})`);
+
+    // Send success response
+    ws.send(JSON.stringify({
+      type: 'auth-success',
+      user: {
+        id: user.id,
+        username: user.username,
+        display_name: user.display_name
+      }
+    }));
+
+    // Update user status to online in database
+    (async () => {
+      try {
+        const { isDbAvailable } = await import('./db/database.js');
+        if (isDbAvailable()) {
+          await userService.updateStatus(user.id, 'online');
+          logger.debug(`User ${user.id} (${user.username}) set to online`);
+        }
+      } catch (err) {
+        logger.warn('Could not update user online status');
+      }
+    })();
+  }
+
   private handleMessage(ws: WebSocket, message: SignalingMessage): void {
     const clientId = this.clientIds.get(ws);
+
+    // Handle authentication first (allowed before authenticated)
+    if (message.type === 'auth') {
+      this.handleAuth(ws, message);
+      return;
+    }
+
+    // Check authentication for all other message types
+    if (!this.clientAuthenticated.get(ws)) {
+      logger.warn(`Unauthenticated client ${clientId} attempted ${message.type}`);
+      ws.send(JSON.stringify({ type: 'auth-required', error: 'Authentication required' }));
+      return;
+    }
 
     // Input validation for message types that require specific fields
     switch (message.type) {
@@ -527,6 +616,250 @@ export class SignalingServer {
         client.send(messageStr);
       }
     });
+  }
+
+  // ============================================
+  // SCREEN SHARE MANAGEMENT WITH BANDWIDTH BUDGET
+  // ============================================
+  // Enforces bandwidth limits per channel to prevent network saturation
+
+  // Bandwidth configuration
+  private readonly SCREEN_SHARE_CONFIG = {
+    maxConcurrentShares: 3,
+    bandwidthBudget: 15000000,          // 15 Mbps total budget per channel
+    qualityBitrates: {
+      '1080p60': 5000000,               // 5 Mbps
+      '1080p30': 3500000,               // 3.5 Mbps
+      '720p60': 2500000,                // 2.5 Mbps
+      '720p30': 1500000,                // 1.5 Mbps
+      '480p30': 800000,                 // 0.8 Mbps
+    },
+    maxShareDurationMs: 4 * 60 * 60 * 1000, // 4 hours
+  };
+
+  // Track active screen shares per channel with bandwidth tracking
+  private activeScreenShares: Map<string, Map<string, { 
+    clientId: string; 
+    username: string; 
+    startedAt: number;
+    quality: string;
+    estimatedBandwidth: number;
+  }>> = new Map();
+
+  /**
+   * Get active screen shares for a channel
+   */
+  getActiveScreenShares(channelId: number): Array<{
+    clientId: string;
+    username: string;
+    startedAt: number;
+    quality: string;
+    estimatedBandwidth: number;
+  }> {
+    const channelShares = this.activeScreenShares.get(channelId.toString());
+    if (!channelShares) return [];
+    
+    // Filter out expired shares (over 4 hours)
+    const now = Date.now();
+    const validShares = Array.from(channelShares.values()).filter(share => 
+      now - share.startedAt < this.SCREEN_SHARE_CONFIG.maxShareDurationMs
+    );
+    
+    return validShares;
+  }
+
+  /**
+   * Calculate total bandwidth used by screen shares in a channel
+   */
+  private getChannelBandwidthUsage(channelId: string): number {
+    const channelShares = this.activeScreenShares.get(channelId);
+    if (!channelShares) return 0;
+    
+    let totalBandwidth = 0;
+    const now = Date.now();
+    
+    channelShares.forEach((share) => {
+      // Only count shares that haven't expired
+      if (now - share.startedAt < this.SCREEN_SHARE_CONFIG.maxShareDurationMs) {
+        totalBandwidth += share.estimatedBandwidth;
+      }
+    });
+    
+    return totalBandwidth;
+  }
+
+  /**
+   * Get estimated bandwidth for a quality level
+   */
+  private getQualityBandwidth(quality: string): number {
+    return this.SCREEN_SHARE_CONFIG.qualityBitrates[quality as keyof typeof this.SCREEN_SHARE_CONFIG.qualityBitrates] 
+      || this.SCREEN_SHARE_CONFIG.qualityBitrates['720p30'];
+  }
+
+  /**
+   * Find the best quality that fits within remaining bandwidth budget
+   */
+  private getBestQualityForBudget(remainingBudget: number): string {
+    const qualities = ['1080p60', '1080p30', '720p60', '720p30', '480p30'] as const;
+    
+    for (const quality of qualities) {
+      const bitrate = this.SCREEN_SHARE_CONFIG.qualityBitrates[quality];
+      if (bitrate <= remainingBudget) {
+        return quality;
+      }
+    }
+    
+    return '480p30'; // Minimum quality
+  }
+
+  /**
+   * Register a screen share start
+   */
+  registerScreenShareStart(channelId: string, clientId: string, username: string, quality: string = '1080p60'): {
+    success: boolean;
+    assignedQuality: string;
+    maxBitrate: number;
+    message: string;
+  } {
+    if (!this.activeScreenShares.has(channelId)) {
+      this.activeScreenShares.set(channelId, new Map());
+    }
+    
+    const channelShares = this.activeScreenShares.get(channelId)!;
+    const currentBandwidth = this.getChannelBandwidthUsage(channelId);
+    const requestedBitrate = this.getQualityBandwidth(quality);
+    const remainingBudget = this.SCREEN_SHARE_CONFIG.bandwidthBudget - currentBandwidth;
+    
+    // Check if we have any budget left
+    if (remainingBudget <= this.SCREEN_SHARE_CONFIG.qualityBitrates['480p30']) {
+      logger.warn(`[Signaling] Screen share rejected - bandwidth budget exhausted in channel ${channelId}`);
+      return {
+        success: false,
+        assignedQuality: quality,
+        maxBitrate: 0,
+        message: 'Channel bandwidth budget exhausted. Please wait for a screen share to stop.'
+      };
+    }
+    
+    // Find best quality that fits budget
+    const assignedQuality = requestedBitrate <= remainingBudget 
+      ? quality 
+      : this.getBestQualityForBudget(remainingBudget);
+    const assignedBitrate = this.getQualityBandwidth(assignedQuality);
+    
+    channelShares.set(clientId, {
+      clientId,
+      username,
+      startedAt: Date.now(),
+      quality: assignedQuality,
+      estimatedBandwidth: assignedBitrate
+    });
+    
+    logger.info(`[Signaling] Screen share started by ${username} in channel ${channelId} at ${assignedQuality} (${(assignedBitrate / 1000000).toFixed(2)} Mbps)`);
+    
+    return {
+      success: true,
+      assignedQuality,
+      maxBitrate: assignedBitrate,
+      message: `Screen share started at ${assignedQuality}`
+    };
+  }
+
+  /**
+   * Register a screen share stop
+   */
+  registerScreenShareStop(channelId: string, clientId: string): void {
+    const channelShares = this.activeScreenShares.get(channelId);
+    if (channelShares) {
+      const share = channelShares.get(clientId);
+      if (share) {
+        logger.info(`[Signaling] Screen share stopped for ${share.username} in channel ${channelId} (freed ${(share.estimatedBandwidth / 1000000).toFixed(2)} Mbps)`);
+      }
+      channelShares.delete(clientId);
+      if (channelShares.size === 0) {
+        this.activeScreenShares.delete(channelId);
+      }
+    }
+  }
+
+  /**
+   * Request floor for screen sharing (returns whether granted with bandwidth info)
+   */
+  requestScreenShareFloor(channelId: string, clientId: string, username: string, desiredQuality: string = '1080p60'): {
+    granted: boolean;
+    position?: number;
+    assignedQuality?: string;
+    maxBitrate?: number;
+    message: string;
+  } {
+    const channelShares = this.activeScreenShares.get(channelId);
+    const currentCount = channelShares ? channelShares.size : 0;
+    
+    // Check max concurrent shares
+    if (currentCount >= this.SCREEN_SHARE_CONFIG.maxConcurrentShares) {
+      return {
+        granted: false,
+        position: 1, // Would implement queue in production
+        message: `Maximum screen shares (${this.SCREEN_SHARE_CONFIG.maxConcurrentShares}) reached. Please wait.`
+      };
+    }
+    
+    // Check bandwidth budget
+    const currentBandwidth = this.getChannelBandwidthUsage(channelId);
+    const remainingBudget = this.SCREEN_SHARE_CONFIG.bandwidthBudget - currentBandwidth;
+    
+    if (remainingBudget <= this.SCREEN_SHARE_CONFIG.qualityBitrates['480p30']) {
+      return {
+        granted: false,
+        message: `Channel bandwidth budget exhausted (${(currentBandwidth / 1000000).toFixed(2)}/${(this.SCREEN_SHARE_CONFIG.bandwidthBudget / 1000000).toFixed(2)} Mbps used)`
+      };
+    }
+    
+    // Grant with best available quality
+    const assignedQuality = this.getQualityBandwidth(desiredQuality) <= remainingBudget
+      ? desiredQuality
+      : this.getBestQualityForBudget(remainingBudget);
+    const assignedBitrate = this.getQualityBandwidth(assignedQuality);
+    
+    return {
+      granted: true,
+      assignedQuality,
+      maxBitrate: assignedBitrate,
+      message: `Screen share granted at ${assignedQuality}`
+    };
+  }
+
+  /**
+   * Get bandwidth stats for a channel (for monitoring)
+   */
+  getChannelBandwidthStats(channelId: string): {
+    used: number;
+    budget: number;
+    remaining: number;
+    shareCount: number;
+    shares: Array<{ username: string; quality: string; bandwidth: number }>;
+  } {
+    const channelShares = this.activeScreenShares.get(channelId);
+    const used = this.getChannelBandwidthUsage(channelId);
+    
+    const shares: Array<{ username: string; quality: string; bandwidth: number }> = [];
+    if (channelShares) {
+      channelShares.forEach((share) => {
+        shares.push({
+          username: share.username,
+          quality: share.quality,
+          bandwidth: share.estimatedBandwidth
+        });
+      });
+    }
+    
+    return {
+      used,
+      budget: this.SCREEN_SHARE_CONFIG.bandwidthBudget,
+      remaining: this.SCREEN_SHARE_CONFIG.bandwidthBudget - used,
+      shareCount: channelShares ? channelShares.size : 0,
+      shares
+    };
   }
 }
 

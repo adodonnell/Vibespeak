@@ -1,4 +1,5 @@
 // In-memory fallback storage when database is unavailable
+// Optimized with O(1) index lookups for all common queries
 
 interface StoredUser {
   id: number;
@@ -27,9 +28,14 @@ interface StoredMessage {
 }
 
 class MemoryStore {
+  // Primary storage (by ID)
   private users: Map<number, StoredUser> = new Map();
   private channels: Map<number, StoredChannel> = new Map();
   private messages: Map<number, StoredMessage> = new Map();
+  
+  // O(1) Index lookups
+  private usersByUsername: Map<string, StoredUser> = new Map();
+  private messagesByChannel: Map<number, StoredMessage[]> = new Map();
   
   private userIdCounter = 1;
   private channelIdCounter = 1;
@@ -58,7 +64,7 @@ class MemoryStore {
     }
   }
 
-  // User methods
+  // User methods - O(1) for all operations
   createUser(username: string, passwordHash: string, displayName?: string): StoredUser {
     const id = this.userIdCounter++;
     const user: StoredUser = {
@@ -70,6 +76,8 @@ class MemoryStore {
       created_at: new Date()
     };
     this.users.set(id, user);
+    // O(1) index by username
+    this.usersByUsername.set(username, user);
     return user;
   }
 
@@ -78,14 +86,20 @@ class MemoryStore {
   }
 
   getUserByUsername(username: string): StoredUser | undefined {
-    for (const user of this.users.values()) {
-      if (user.username === username) return user;
-    }
-    return undefined;
+    // O(1) lookup via index
+    return this.usersByUsername.get(username);
   }
 
   getOnlineUsers(): StoredUser[] {
     return Array.from(this.users.values()).filter(u => u.status === 'online');
+  }
+
+  // Update user status
+  updateUserStatus(userId: number, status: string): void {
+    const user = this.users.get(userId);
+    if (user) {
+      user.status = status;
+    }
   }
 
   // Channel methods
@@ -93,7 +107,7 @@ class MemoryStore {
     return Array.from(this.channels.values()).sort((a, b) => a.position - b.position);
   }
 
-  // Message methods
+  // Message methods - O(1) for channel retrieval
   createMessage(channelId: number, userId: number, content: string, username?: string): StoredMessage {
     const id = this.messageIdCounter++;
     const message: StoredMessage = {
@@ -105,15 +119,41 @@ class MemoryStore {
       username
     };
     this.messages.set(id, message);
+    
+    // O(1) index by channel
+    if (!this.messagesByChannel.has(channelId)) {
+      this.messagesByChannel.set(channelId, []);
+    }
+    this.messagesByChannel.get(channelId)!.push(message);
+    
     return message;
   }
 
   getMessages(channelId: number, limit = 50): StoredMessage[] {
-    const channelMessages = Array.from(this.messages.values())
-      .filter(m => m.channel_id === channelId)
-      .sort((a, b) => a.created_at.getTime() - b.created_at.getTime())
-      .slice(-limit);
-    return channelMessages;
+    // O(1) lookup via channel index
+    const channelMessages = this.messagesByChannel.get(channelId);
+    if (!channelMessages) return [];
+    
+    // Return last N messages (already in chronological order)
+    return channelMessages.slice(-limit);
+  }
+
+  // Clear all messages for a channel (useful for cleanup)
+  clearChannelMessages(channelId: number): void {
+    const messages = this.messagesByChannel.get(channelId);
+    if (messages) {
+      messages.forEach(m => this.messages.delete(m.id));
+      this.messagesByChannel.delete(channelId);
+    }
+  }
+
+  // Get stats for monitoring
+  getStats(): { users: number; channels: number; messages: number } {
+    return {
+      users: this.users.size,
+      channels: this.channels.size,
+      messages: this.messages.size,
+    };
   }
 }
 

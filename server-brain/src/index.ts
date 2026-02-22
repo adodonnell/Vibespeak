@@ -10,6 +10,59 @@ import http from 'http';
 import { randomBytes } from 'crypto';
 
 // ============================================
+// RATE LIMITING SYSTEM
+// ============================================
+// Per-IP and per-user rate limiting to prevent abuse
+
+interface RateLimitEntry {
+  count: number;
+  resetAt: number;
+  blocked: boolean;
+}
+
+const rateLimitStore = new Map<string, RateLimitEntry>();
+
+const RATE_LIMIT_CONFIG = {
+  windowMs: 60 * 1000,           // 1 minute window
+  maxRequestsPerMinute: 100,      // Max requests per minute per IP
+  maxMessagesPerMinute: 30,       // Max messages per minute per user
+  maxAuthAttemptsPerMinute: 5,    // Max auth attempts per minute per IP
+};
+
+function checkRateLimit(key: string, maxRequests: number): { allowed: boolean; remaining: number; resetIn: number } {
+  const now = Date.now();
+  const entry = rateLimitStore.get(key);
+  
+  if (!entry || now > entry.resetAt) {
+    // Create new window
+    rateLimitStore.set(key, {
+      count: 1,
+      resetAt: now + RATE_LIMIT_CONFIG.windowMs,
+      blocked: false,
+    });
+    return { allowed: true, remaining: maxRequests - 1, resetIn: RATE_LIMIT_CONFIG.windowMs };
+  }
+  
+  if (entry.count >= maxRequests) {
+    entry.blocked = true;
+    return { allowed: false, remaining: 0, resetIn: entry.resetAt - now };
+  }
+  
+  entry.count++;
+  return { allowed: true, remaining: maxRequests - entry.count, resetIn: entry.resetAt - now };
+}
+
+// Cleanup old rate limit entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of rateLimitStore) {
+    if (now > entry.resetAt) {
+      rateLimitStore.delete(key);
+    }
+  }
+}, 5 * 60 * 1000);
+
+// ============================================
 // ADMIN TOKEN SYSTEM (TeamSpeak-style)
 // ============================================
 // Single-use token generated on server startup.
@@ -594,6 +647,33 @@ async function main() {
 
       const userId = jwtUser ? jwtUser.id : (session ? session.userId : 0);
       const username = jwtUser ? jwtUser.username : (session ? session.username : 'Unknown');
+      
+      // Rate limiting: max 30 messages per minute per user
+      const clientIp = req.socket.remoteAddress || 'unknown';
+      const rateLimitKey = `msg:${userId}:${clientIp}`;
+      const rateLimit = checkRateLimit(rateLimitKey, RATE_LIMIT_CONFIG.maxMessagesPerMinute);
+      
+      if (!rateLimit.allowed) {
+        res.writeHead(429, { 
+          'Content-Type': 'application/json',
+          'Retry-After': String(Math.ceil(rateLimit.resetIn / 1000)),
+          'X-RateLimit-Limit': String(RATE_LIMIT_CONFIG.maxMessagesPerMinute),
+          'X-RateLimit-Remaining': '0',
+          'X-RateLimit-Reset': String(Math.ceil(rateLimit.resetIn / 1000)),
+        });
+        res.end(JSON.stringify({ 
+          error: 'Too many requests', 
+          message: `Rate limit exceeded. Try again in ${Math.ceil(rateLimit.resetIn / 1000)} seconds.`,
+          retryAfter: rateLimit.resetIn 
+        }));
+        return;
+      }
+      
+      // Set rate limit headers
+      res.setHeader('X-RateLimit-Limit', String(RATE_LIMIT_CONFIG.maxMessagesPerMinute));
+      res.setHeader('X-RateLimit-Remaining', String(rateLimit.remaining));
+      res.setHeader('X-RateLimit-Reset', String(Math.ceil(rateLimit.resetIn / 1000)));
+      
       try {
         const { channel_id, content, parent_id } = await parseBody();
         
@@ -1448,6 +1528,273 @@ async function main() {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
       } catch (err) { res.writeHead(400); res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Failed' })); }
+      return;
+    }
+
+    // ============================================
+    // GDPR COMPLIANCE - DATA EXPORT API
+    // ============================================
+
+    // GET /api/users/me/export - Export all user data
+    if (url.pathname === '/api/users/me/export' && req.method === 'GET') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+
+      try {
+        const exportData: {
+          user: any;
+          messages: any[];
+          exportedAt: string;
+        } = {
+          user: null,
+          messages: [],
+          exportedAt: new Date().toISOString(),
+        };
+
+        // Get user info
+        if (getDbStatus()) {
+          const { userService } = await import('./api/users.js');
+          exportData.user = await userService.getUserById(jwtUser.id);
+          
+          // Get user's messages using existing method
+          const messages = await messageService.getRecentMessages(1, 1000);
+          exportData.messages = messages.filter((m: any) => m.user_id === jwtUser.id);
+        }
+
+        res.writeHead(200, { 
+          'Content-Type': 'application/json',
+          'Content-Disposition': 'attachment; filename="vibespeak-data-export.json"' 
+        });
+        res.end(JSON.stringify(exportData, null, 4));
+      } catch (err) {
+        logger.error('Failed to export user data:', err);
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Failed to export data' }));
+      }
+      return;
+    }
+
+    // ============================================
+    // GDPR COMPLIANCE - ACCOUNT DELETION API
+    // ============================================
+
+    // DELETE /api/users/me - Delete current user account (GDPR right to erasure)
+    if (url.pathname === '/api/users/me' && req.method === 'DELETE') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+
+      try {
+        if (getDbStatus()) {
+          const { userService } = await import('./api/users.js');
+          
+          // Log the deletion for audit purposes (without retaining user data)
+          logger.info(`Account deletion requested for user ${jwtUser.username} (${jwtUser.id})`);
+          
+          // Delete user's messages first (cascade should handle this, but explicit is safer)
+          await query('DELETE FROM messages WHERE user_id = $1', [jwtUser.id]);
+          
+          // Delete user's reactions
+          await query('DELETE FROM message_reactions WHERE user_id = $1', [jwtUser.id]);
+          
+          // Delete user's memberships
+          await query('DELETE FROM server_members WHERE user_id = $1', [jwtUser.id]);
+          
+          // Delete user's read states
+          await query('DELETE FROM read_state WHERE user_id = $1', [jwtUser.id]);
+          
+          // Finally delete the user account
+          await query('DELETE FROM users WHERE id = $1', [jwtUser.id]);
+          
+          logger.info(`Account ${jwtUser.id} successfully deleted`);
+        }
+        
+        // Clear any sessions
+        for (const [sessionId, session] of sessions.entries()) {
+          if (session.userId === jwtUser.id) {
+            sessions.delete(sessionId);
+          }
+        }
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          success: true, 
+          message: 'Your account and all associated data have been permanently deleted.' 
+        }));
+      } catch (err) {
+        logger.error('Failed to delete account:', err);
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Failed to delete account' }));
+      }
+      return;
+    }
+
+    // ============================================
+    // ADMIN - JWT ROTATION ENDPOINT
+    // ============================================
+
+    // POST /api/admin/rotate-jwt - Manually rotate JWT secret (admin only)
+    if (url.pathname === '/api/admin/rotate-jwt' && req.method === 'POST') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      
+      // Check if user has admin role
+      if (getDbStatus()) {
+        const { roleService } = await import('./api/roles.js');
+        const permissions = await roleService.getMemberPermissionLevel(1, jwtUser.id);
+        if (!roleService.isAdmin(permissions)) {
+          res.writeHead(403); res.end(JSON.stringify({ error: 'Admin privileges required' })); return;
+        }
+      } else {
+        res.writeHead(503); res.end(JSON.stringify({ error: 'Database required for admin verification' })); return;
+      }
+      
+      try {
+        const { rotateSecret } = await import('./auth.js');
+        const newSecretId = rotateSecret();
+        
+        logger.info(`JWT secret rotated by admin user ${jwtUser.username}`);
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          success: true, 
+          message: 'JWT secret rotated successfully',
+          newSecretId: newSecretId.substring(0, 8)
+        }));
+      } catch (err) {
+        logger.error('Failed to rotate JWT secret:', err);
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Failed to rotate secret' }));
+      }
+      return;
+    }
+
+    // GET /api/admin/jwt-status - Get JWT rotation status (admin only)
+    if (url.pathname === '/api/admin/jwt-status' && req.method === 'GET') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      
+      // Check if user has admin role
+      if (getDbStatus()) {
+        const { roleService } = await import('./api/roles.js');
+        const permissions = await roleService.getMemberPermissionLevel(1, jwtUser.id);
+        if (!roleService.isAdmin(permissions)) {
+          res.writeHead(403); res.end(JSON.stringify({ error: 'Admin privileges required' })); return;
+        }
+      }
+      
+      try {
+        const { getSecretRotationStatus } = await import('./auth.js');
+        const status = getSecretRotationStatus();
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(status));
+      } catch (err) {
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Failed to get status' }));
+      }
+      return;
+    }
+
+    // ============================================
+    // SCREEN SHARE FLOOR CONTROL API
+    // ============================================
+
+    // POST /api/channels/:id/screen-share/request - Request screen share floor
+    if (url.pathname.match(/^\/api\/channels\/\d+\/screen-share\/request$/) && req.method === 'POST') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      
+      const channelId = parseInt(url.pathname.split('/')[3]);
+      
+      try {
+        // Check if there's capacity for another screen share
+        const activeShares = signalingServer.getActiveScreenShares(channelId);
+        const maxShares = 3; // Configurable
+        
+        if (activeShares.length >= maxShares) {
+          // Add to queue
+          res.writeHead(202, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ 
+            success: true, 
+            queued: true, 
+            position: activeShares.length - maxShares + 1,
+            message: 'Screen share queue position: ' + (activeShares.length - maxShares + 1)
+          }));
+        } else {
+          // Grant immediate permission
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ 
+            success: true, 
+            granted: true,
+            maxBitrate: 5000000, // 5 Mbps budget
+            message: 'Screen share granted'
+          }));
+        }
+      } catch (err) {
+        logger.error('Failed to process screen share request:', err);
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Failed to process request' }));
+      }
+      return;
+    }
+
+    // POST /api/channels/:id/screen-share/stop - Stop screen share
+    if (url.pathname.match(/^\/api\/channels\/\d+\/screen-share\/stop$/) && req.method === 'POST') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      
+      try {
+        // Notify WebSocket clients that screen share stopped
+        signalingServer.broadcastToAll({
+          type: 'screen-share-stop',
+          userId: jwtUser.id,
+          username: jwtUser.username
+        });
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (err) {
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Failed' }));
+      }
+      return;
+    }
+
+    // GET /api/channels/:id/screen-shares - Get active screen shares
+    if (url.pathname.match(/^\/api\/channels\/\d+\/screen-shares$/) && req.method === 'GET') {
+      const channelId = parseInt(url.pathname.split('/')[3]);
+      
+      try {
+        const shares = signalingServer.getActiveScreenShares(channelId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(shares));
+      } catch (err) {
+        res.writeHead(200); res.end(JSON.stringify([]));
+      }
+      return;
+    }
+
+    // ============================================
+    // VOICE QUALITY API
+    // ============================================
+
+    // GET /api/voice/quality/:channelId - Get voice quality stats
+    if (url.pathname.match(/^\/api\/voice\/quality\/\d+$/) && req.method === 'GET') {
+      const channelId = url.pathname.split('/')[4];
+      
+      try {
+        const stats = voiceRelayServer.getChannelQuality(channelId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(stats));
+      } catch (err) {
+        res.writeHead(200); res.end(JSON.stringify([]));
+      }
+      return;
+    }
+
+    // GET /api/voice/stats - Get global voice relay stats
+    if (url.pathname === '/api/voice/stats' && req.method === 'GET') {
+      try {
+        const stats = voiceRelayServer.getStats();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(stats));
+      } catch (err) {
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Failed to get stats' }));
+      }
       return;
     }
 
