@@ -136,7 +136,14 @@ const VibeSpeakAppContent: React.FC = () => {
   useEffect(() => {
     if (!user) return;
 
-    apiClient.getVoiceChannels().then(setVoiceChannels).catch(() => {});
+    apiClient.getVoiceChannels().then(data => {
+      if (Array.isArray(data)) {
+        setVoiceChannels(data);
+      } else {
+        console.warn('[VibeSpeakApp] getVoiceChannels returned non-array:', data);
+        setVoiceChannels([]);
+      }
+    }).catch(() => {});
     realtimeClient.connect(user.username).catch(() => {});
 
     const unsubVoice = realtimeClient.onVoiceChannelUpdate((channels) => {
@@ -350,6 +357,10 @@ const VibeSpeakAppContent: React.FC = () => {
   useEffect(() => {
     if (!activeServerId) return;
     apiClient.getChannels(activeServerId).then(channels => {
+      if (!Array.isArray(channels)) {
+        console.warn('[VibeSpeakApp] getChannels returned non-array:', channels);
+        return;
+      }
       const textChs = channels.filter((ch: any) => ch.type === 'text');
       const voiceChs = channels.filter((ch: any) => ch.type === 'voice');
       setCategories([
@@ -368,6 +379,10 @@ const VibeSpeakAppContent: React.FC = () => {
   useEffect(() => {
     if (!currentChannelId || viewMode !== 'text') return;
     apiClient.getMessages(currentChannelId).then(msgs => {
+      if (!Array.isArray(msgs)) {
+        console.warn('[VibeSpeakApp] getMessages returned non-array:', msgs);
+        return;
+      }
       setMessages(msgs.map((msg: any) => ({
         id: msg.id.toString(),
         sender: msg.username || msg.display_name || 'Unknown',
@@ -382,6 +397,10 @@ const VibeSpeakAppContent: React.FC = () => {
   useEffect(() => {
     if (!activeServerId) return;
     apiClient.getMembers(activeServerId).then(data => {
+      if (!Array.isArray(data)) {
+        console.warn('[VibeSpeakApp] getMembers returned non-array:', data);
+        return;
+      }
       setMembers(data.map((m: any) => ({ id: m.id, username: m.username, status: m.status || 'offline', roles: m.roles || [] })));
     }).catch(console.error);
   }, [activeServerId]);
@@ -390,6 +409,10 @@ const VibeSpeakAppContent: React.FC = () => {
   useEffect(() => {
     if (!isAuthenticated) return;
     apiClient.getServers().then(data => {
+      if (!Array.isArray(data)) {
+        console.warn('[VibeSpeakApp] getServers returned non-array:', data);
+        return;
+      }
       setServers(data);
       if (data.length > 0 && activeServerId === null) setActiveServerId(data[0].id);
     }).catch(console.error);
