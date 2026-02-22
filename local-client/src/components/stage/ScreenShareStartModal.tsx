@@ -58,17 +58,17 @@ const ScreenShareStartModal: React.FC<Props> = ({
     if (isOpen && isElectron) {
       setIsLoadingSources(true);
       (window as any).electronAPI.getScreenSources()
-        .then((srcs: Array<{ id: string; name: string; thumbnail: { toDataURL: () => string }; type: 'screen' | 'window' }>) => {
+        .then((srcs: Array<{ id: string; name: string; thumbnail: string; type: 'screen' | 'window' }>) => {
           console.log('[ScreenShare] Received', srcs.length, 'sources from Electron');
           
-          // Process sources - type is now provided directly by Electron
+          // Process sources - thumbnail is already a data URL string
           const processedSources: ScreenSource[] = srcs.map(s => {
             console.log(`[ScreenShare] Source: "${s.name}" -> ${s.type}`);
             return {
               id: s.id,
               name: s.name,
-              thumbnail: s.thumbnail.toDataURL(),
-              type: s.type, // Use the type from Electron directly
+              thumbnail: s.thumbnail, // Already a data URL from main process
+              type: s.type,
             };
           });
           

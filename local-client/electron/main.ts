@@ -14,10 +14,12 @@ function createWindow() {
     minHeight: 600,
     backgroundColor: '#36393f',
     show: false, // Don't show until ready
+    fullscreenable: true, // Enable fullscreen support
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      webSecurity: true,
     },
   });
 
@@ -220,18 +222,18 @@ app.whenReady().then(() => {
         })
       ]);
       
-      // Tag each source with its type
+      // Tag each source with its type and convert thumbnail to data URL
       const screenSources = screens.map(s => ({
         id: s.id,
         name: s.name || 'Screen',
-        thumbnail: s.thumbnail,
+        thumbnail: s.thumbnail.toDataURL(), // Convert NativeImage to data URL for IPC
         type: 'screen' as const
       }));
       
       const windowSources = windows.map(s => ({
         id: s.id,
         name: s.name || 'Window',
-        thumbnail: s.thumbnail,
+        thumbnail: s.thumbnail.toDataURL(), // Convert NativeImage to data URL for IPC
         type: 'window' as const
       }));
       
