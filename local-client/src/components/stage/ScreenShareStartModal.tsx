@@ -58,11 +58,18 @@ const ScreenShareStartModal: React.FC<Props> = ({
     if (isOpen && isElectron) {
       setIsLoadingSources(true);
       (window as any).electronAPI.getScreenSources()
-        .then((srcs: Array<{ id: string; name: string; thumbnail: string; type: 'screen' | 'window' }>) => {
+        .then((srcs: unknown) => {
+          // Validate response is an array
+          if (!Array.isArray(srcs)) {
+            console.error('[ScreenShare] getScreenSources returned non-array:', srcs);
+            setSources([]);
+            return;
+          }
+          
           console.log('[ScreenShare] Received', srcs.length, 'sources from Electron');
           
           // Process sources - thumbnail is already a data URL string
-          const processedSources: ScreenSource[] = srcs.map(s => {
+          const processedSources: ScreenSource[] = srcs.map((s: { id: string; name: string; thumbnail: string; type: 'screen' | 'window' }) => {
             console.log(`[ScreenShare] Source: "${s.name}" -> ${s.type}`);
             return {
               id: s.id,
@@ -74,7 +81,10 @@ const ScreenShareStartModal: React.FC<Props> = ({
           
           setSources(processedSources);
         })
-        .catch(console.error)
+        .catch((err: Error) => {
+          console.error('[ScreenShare] Error loading sources:', err);
+          setSources([]);
+        })
         .finally(() => setIsLoadingSources(false));
     }
   }, [isOpen, isElectron]);
