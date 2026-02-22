@@ -33,6 +33,23 @@ const ScreenShareViewer: React.FC<ScreenShareViewerProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
+  
+  // Log component mount for debugging
+  useEffect(() => {
+    console.log('[ScreenShareViewer] Component mounted with stream:', stream?.id);
+    console.log('[ScreenShareViewer] presenterName:', presenterName);
+    console.log('[ScreenShareViewer] isLocalShare:', isLocalShare);
+    return () => {
+      console.log('[ScreenShareViewer] Component unmounted');
+    };
+  }, []);
+
+  // TEMPORARY: Keep controls always visible for debugging
+  // TODO: Re-enable auto-hide after fixing fullscreen
+  useEffect(() => {
+    // Keep controls visible
+    setShowControls(true);
+  }, []);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Attach stream to video element
@@ -85,45 +102,35 @@ const ScreenShareViewer: React.FC<ScreenShareViewerProps> = ({
     return () => { if (hideTimer.current) clearTimeout(hideTimer.current); };
   }, [resetHideTimer]);
 
-  const toggleFullscreen = useCallback(async () => {
-    const elem = containerRef.current;
-    if (!elem) return;
+  const toggleFullscreen = useCallback(async (e?: React.MouseEvent) => {
+    // Prevent event from bubbling up
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     
     try {
-      const isCurrentlyFullscreen = !!(
-        document.fullscreenElement || 
-        (document as any).webkitFullscreenElement ||
-        (document as any).mozFullScreenElement ||
-        (document as any).msFullscreenElement
-      );
+      // In Electron, use the IPC fullscreen API (whole window fullscreen)
+      const electronAPI = (window as any).electronAPI;
+      if (electronAPI?.toggleFullscreen) {
+        const isFull = await electronAPI.toggleFullscreen();
+        setIsFullscreen(isFull);
+        return;
+      }
+      
+      // Fallback for browser - use element fullscreen
+      const container = containerRef.current;
+      if (!container) return;
+      
+      const isCurrentlyFullscreen = !!document.fullscreenElement;
       
       if (!isCurrentlyFullscreen) {
-        // Enter fullscreen on the container element (the stream)
-        if (elem.requestFullscreen) {
-          await elem.requestFullscreen();
-        } else if ((elem as any).webkitRequestFullscreen) {
-          (elem as any).webkitRequestFullscreen();
-        } else if ((elem as any).webkitRequestFullScreen) {
-          (elem as any).webkitRequestFullScreen();
-        } else if ((elem as any).mozRequestFullScreen) {
-          (elem as any).mozRequestFullScreen();
-        } else if ((elem as any).msRequestFullscreen) {
-          (elem as any).msRequestFullscreen();
-        }
+        await container.requestFullscreen();
       } else {
-        // Exit fullscreen
-        if (document.exitFullscreen) {
-          await document.exitFullscreen();
-        } else if ((document as any).webkitExitFullscreen) {
-          (document as any).webkitExitFullscreen();
-        } else if ((document as any).mozCancelFullScreen) {
-          (document as any).mozCancelFullScreen();
-        } else if ((document as any).msExitFullscreen) {
-          (document as any).msExitFullscreen();
-        }
+        await document.exitFullscreen();
       }
-    } catch (err) {
-      console.error('Fullscreen error:', err);
+    } catch (err: any) {
+      console.error('[Fullscreen] Error:', err);
     }
   }, []);
 
@@ -222,10 +229,16 @@ const ScreenShareViewer: React.FC<ScreenShareViewerProps> = ({
         gap: 8,
         opacity: showControls ? 1 : 0,
         transition: 'opacity 0.3s',
+        pointerEvents: 'auto' as const,
+        zIndex: 10,
       }}>
         {/* Fullscreen toggle */}
         <button
-          onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
+          onClick={(e) => { 
+            e.preventDefault();
+            e.stopPropagation(); 
+            toggleFullscreen(e); 
+          }}
           onDoubleClick={(e) => e.stopPropagation()}
           title={isFullscreen ? 'Exit fullscreen (or press Escape)' : 'Fullscreen (or double-click)'}
           style={controlBtn}
