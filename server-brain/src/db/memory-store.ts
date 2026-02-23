@@ -1,10 +1,11 @@
 // In-memory fallback storage when database is unavailable
 // Optimized with O(1) index lookups for all common queries
+// Note: password_hash is stored only for DB compatibility - not used for auth (TeamSpeak-style)
 
 interface StoredUser {
   id: number;
   username: string;
-  password_hash: string;
+  password_hash: string;  // Random value, not used for authentication
   display_name: string | null;
   status: string;
   created_at: Date;

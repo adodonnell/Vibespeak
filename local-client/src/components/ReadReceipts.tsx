@@ -63,7 +63,7 @@ export default function ReadReceipts({ channelId, messageId, currentUserId }: Re
 }
 
 // Hook for tracking read state in a channel
-export function useReadReceipts(channelId: number | null, messageId: number) {
+export function useReadReceipts(channelId: number | null, messageCount: number) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [lastReadMessageId, setLastReadMessageId] = useState<number | null>(null);
 
@@ -73,10 +73,10 @@ export function useReadReceipts(channelId: number | null, messageId: number) {
   }, [channelId]);
 
   useEffect(() => {
-    if (lastReadMessageId && messageId) {
-      setUnreadCount(messageId - lastReadMessageId);
+    if (lastReadMessageId && messageCount) {
+      setUnreadCount(messageCount - lastReadMessageId);
     }
-  }, [messageId, lastReadMessageId]);
+  }, [messageCount, lastReadMessageId]);
 
   const loadReadState = async () => {
     if (!channelId) return;

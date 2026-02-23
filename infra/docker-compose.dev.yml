@@ -1,0 +1,85 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# VibeSpeak — Development docker-compose
+#
+# Usage:
+#   docker compose -f infra/docker-compose.dev.yml up -d
+#
+# This starts only the infrastructure services (PostgreSQL, Redis).
+# The server-brain and local-client run locally with hot-reload.
+# ─────────────────────────────────────────────────────────────────────────────
+
+version: '3.9'
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: vibespeak-db-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     vibespeak
+      POSTGRES_PASSWORD: vibespeak
+      POSTGRES_DB:       vibespeak
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vibespeak -d vibespeak"]
+      interval: 10s
+      timeout:  5s
+      retries:  5
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: vibespeak-redis-dev
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout:  5s
+      retries:  5
+
+  # ── Adminer (Database GUI) ─────────────────────────────────────────────────
+  adminer:
+    image: adminer:latest
+    container_name: vibespeak-adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    networks:
+      - vibespeak-dev-net
+    depends_on:
+      - postgres
+
+  # ── Redis Commander (Redis GUI) ────────────────────────────────────────────
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: vibespeak-redis-gui
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+
+# ── Named volumes ──────────────────────────────────────────────────────────────
+volumes:
+  postgres_dev_data:
+    driver: local
+  redis_dev_data:
+    driver: local
+
+# ── Internal network ───────────────────────────────────────────────────────────
+networks:
+  vibespeak-dev-net:
+    driver: bridge

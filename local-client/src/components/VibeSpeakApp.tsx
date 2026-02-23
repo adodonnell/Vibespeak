@@ -379,11 +379,8 @@ const VibeSpeakAppContent: React.FC = () => {
   useEffect(() => {
     if (!currentChannelId || viewMode !== 'text') return;
     apiClient.getMessages(currentChannelId).then(msgs => {
-      if (!Array.isArray(msgs)) {
-        console.warn('[VibeSpeakApp] getMessages returned non-array:', msgs);
-        return;
-      }
-      setMessages(msgs.map((msg: any) => ({
+      const messageArray = Array.isArray(msgs) ? msgs : [];
+      setMessages(messageArray.map((msg: any) => ({
         id: msg.id.toString(),
         sender: msg.username || msg.display_name || 'Unknown',
         senderId: msg.user_id,

@@ -3,6 +3,7 @@ import VoiceDashboard from '../stage/VoiceDashboard';
 import ScreenShareViewer from '../stage/ScreenShareViewer';
 import ChatArea from '../ChatArea';
 import Pinboard from '../stage/Pinboard';
+import type { ChatMessage } from './MainPane';
 
 export interface VoiceUser {
   id: string;
@@ -16,12 +17,7 @@ export interface VoiceUser {
   isDeafened: boolean;
 }
 
-export interface ChatMessage {
-  id: string;
-  sender: string;
-  content: string;
-  timestamp: number;
-}
+export type { ChatMessage };
 
 
 interface OnlineMember {

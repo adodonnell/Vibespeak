@@ -14,9 +14,12 @@
     "stop:infra": "docker-compose -f infra/docker-compose.yml down"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.0.0",
     "@types/ws": "^8.18.1",
     "concurrently": "^8.2.2",
     "electron": "^28.3.3",
+    "ts-jest": "^29.4.6",
     "tsx": "^4.21.0",
     "typescript": "^5.3.3"
   },
@@ -25,6 +28,7 @@
     "pnpm": ">=8.0.0"
   },
   "dependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/jsonwebtoken": "^9.0.10",
     "ioredis": "^5.9.3",
     "jsonwebtoken": "^9.0.3",

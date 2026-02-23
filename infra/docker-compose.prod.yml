@@ -1,8 +1,17 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # VibeSpeak — Production VPS docker-compose
-# Usage:
+# 
+# Quick Start:
 #   1. cp infra/.env.example infra/.env   (fill in all required values)
 #   2. docker compose -f infra/docker-compose.prod.yml up -d
+#   3. docker compose -f infra/docker-compose.prod.yml exec server-brain npm run migrate
+#
+# Services included:
+#   - PostgreSQL (primary database)
+#   - Redis (presence, sessions, pub/sub)
+#   - Server Brain (HTTP API + WebSocket + Voice Relay)
+#   - Coturn (TURN/STUN for WebRTC)
+#   - Backup (automated daily backups)
 # ─────────────────────────────────────────────────────────────────────────────
 
 version: '3.9'
@@ -18,13 +27,60 @@ services:
       POSTGRES_USER:     ${POSTGRES_USER:-vibespeak}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB:       ${POSTGRES_DB:-vibespeak}
+      # Performance tuning
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - postgres_backup:/backup
     networks:
       - vibespeak-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vibespeak}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vibespeak} -d ${POSTGRES_DB:-vibespeak}"]
+      interval: 10s
+      timeout:  5s
+      retries:  5
+      start_period: 10s
+    # Performance settings
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=1GB"
+      - "-c"
+      - "maintenance_work_mem=64MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "default_statistics_target=100"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "work_mem=2621kB"
+      - "-c"
+      - "min_wal_size=1GB"
+      - "-c"
+      - "max_wal_size=4GB"
+
+  # ── Redis (Presence, Sessions, Pub/Sub) ──────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: vibespeak-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - vibespeak-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout:  5s
       retries:  5
@@ -40,22 +96,40 @@ services:
       - "3001:3001"      # HTTP API
       - "3002:3002"      # WebSocket signaling
       - "9988:9988/udp"  # Voice relay (UDP)
-      - "9988:9988/udp"  # Voice relay (UDP) - must be exposed for direct UDP
     environment:
       NODE_ENV:          production
       PORT:              3001
       WS_PORT:           3002
       VOICE_PORT:        9988
+      # Database
       POSTGRES_HOST:     postgres
+      POSTGRES_PORT:     5432
       POSTGRES_USER:     ${POSTGRES_USER:-vibespeak}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB:       ${POSTGRES_DB:-vibespeak}
+      # Redis
+      REDIS_URL:         redis://redis:6379
+      # JWT
       JWT_SECRET:        ${JWT_SECRET}
       JWT_EXPIRES_IN:    7d
+      # TURN
+      TURN_SECRET:       ${COTURN_SECRET}
+      TURN_URL:          turn:${COTURN_EXTERNAL_IP}:3478
       # CORS — set to your domain or * during testing (comma-separated for multiple)
       ALLOWED_ORIGINS:   ${ALLOWED_ORIGINS:-*}
+      # File uploads
+      MAX_FILE_SIZE:     ${MAX_FILE_SIZE:-52428800}
+      UPLOAD_DIR:        /app/uploads
+      # Rate limiting
+      RATE_LIMIT_WINDOW: 60000
+      RATE_LIMIT_MAX:    100
+    volumes:
+      - uploads_data:/app/uploads
+      - logs_data:/app/logs
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - vibespeak-net
@@ -63,7 +137,7 @@ services:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
       interval: 30s
       timeout:  10s
-      start_period: 15s
+      start_period: 30s
       retries: 3
 
   # ── Coturn TURN/STUN (required for WebRTC through NAT) ──────────────────────
@@ -75,15 +149,48 @@ services:
     volumes:
       - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
     environment:
-      # These are substituted into turnserver.conf at startup if you use
-      # envsubst — or set them directly in turnserver.conf instead.
       COTURN_EXTERNAL_IP: ${COTURN_EXTERNAL_IP}
       COTURN_RELAY_IP:    ${COTURN_RELAY_IP:-${COTURN_EXTERNAL_IP}}
       COTURN_SECRET:      ${COTURN_SECRET}
 
+  # ── Backup Service (daily automated backups) ────────────────────────────────
+  backup:
+    image: prodrigestivill/postgres-backup-local:16-alpine
+    container_name: vibespeak-backup
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST:     postgres
+      POSTGRES_DB:       ${POSTGRES_DB:-vibespeak}
+      POSTGRES_USER:     ${POSTGRES_USER:-vibespeak}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Backup schedule (cron format)
+      SCHEDULE:          "@daily"
+      # Retention
+      BACKUP_KEEP_DAYS:  7
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 6
+      # Compression
+      BACKUP_COMPRESS:   "gzip"
+    volumes:
+      - postgres_backup:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - vibespeak-net
+
 # ── Named volumes ──────────────────────────────────────────────────────────────
 volumes:
   postgres_data:
+    driver: local
+  postgres_backup:
+    driver: local
+  redis_data:
+    driver: local
+  uploads_data:
+    driver: local
+  logs_data:
+    driver: local
 
 # ── Internal network ───────────────────────────────────────────────────────────
 networks:

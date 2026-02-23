@@ -1,11 +1,11 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_MATRIX_USERNAME?: string;
-  readonly VITE_MATRIX_PASSWORD?: string;
-  readonly VITE_MATRIX_HOMESERVER?: string;
+  readonly VITE_API_URL: string
+  readonly VITE_WS_URL: string
+  // Add more env variables here as needed
 }
 
 interface ImportMeta {
-  readonly env: ImportMetaEnv;
+  readonly env: ImportMetaEnv
 }

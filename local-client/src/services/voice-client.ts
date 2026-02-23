@@ -203,14 +203,31 @@ export class VoiceClient {
   // Join-lock: prevents concurrent or duplicate join calls
   private isJoining: boolean = false;
 
-  // ICE servers — assigned in constructor (STUN always, TURN if env var set)
-  private iceServers!: RTCIceServer[];
+  // ICE servers — fetched dynamically from server API
+  private iceServers: RTCIceServer[] = [];
+  private iceServersFetched: boolean = false;
+  private iceServersExpiry: number = 0; // Timestamp when ICE servers need refresh
 
   private static readonly SETTINGS_KEY = 'disorder:voice-settings';
+  private static readonly ICE_CACHE_KEY = 'disorder:ice-servers';
+  private static readonly ICE_TTL_MS = 23 * 60 * 60 * 1000; // 23 hours (server gives 24h ttl)
 
   constructor() {
-    // Build ICE server list — always include STUN; add TURN if configured via env vars
-    const baseStun: RTCIceServer[] = [
+    // Initialize with STUN servers immediately (always works)
+    this.iceServers = this.getDefaultStunServers();
+    
+    // Try to load cached ICE servers from localStorage
+    this.loadCachedIceServers();
+    
+    // Fetch fresh ICE servers from server (includes TURN if configured)
+    this.fetchIceServers();
+    
+    // User ID is managed by the server via WebSocket
+    this.loadSettings();
+  }
+
+  private getDefaultStunServers(): RTCIceServer[] {
+    return [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
@@ -218,24 +235,112 @@ export class VoiceClient {
       { urls: 'stun:stun4.l.google.com:19302' },
       { urls: 'stun:global.stun.twilio.com:3478' },
     ];
+  }
 
-    const turnUrl = import.meta.env.VITE_TURN_URL as string | undefined;
-    if (turnUrl) {
-      const turnUser = (import.meta.env.VITE_TURN_USER as string | undefined) || '';
-      const turnPass = (import.meta.env.VITE_TURN_PASS as string | undefined) || '';
-      baseStun.push({
-        urls: turnUrl,
-        username: turnUser,
-        credential: turnPass,
-      });
-      console.log('[Voice] TURN server configured:', turnUrl);
-    } else if (import.meta.env.DEV) {
-      console.log('[Voice] No TURN server configured — set VITE_TURN_URL for NAT traversal');
+  /**
+   * Load cached ICE servers from localStorage (survives page refresh)
+   */
+  private loadCachedIceServers(): void {
+    try {
+      const raw = localStorage.getItem(VoiceClient.ICE_CACHE_KEY);
+      if (raw) {
+        const cached = JSON.parse(raw) as { servers: RTCIceServer[]; expiry: number };
+        if (cached.expiry > Date.now()) {
+          this.iceServers = cached.servers;
+          this.iceServersExpiry = cached.expiry;
+          this.iceServersFetched = true;
+          console.log('[Voice] Loaded cached ICE servers from localStorage');
+        }
+      }
+    } catch (_) {
+      // Corrupted cache, ignore
+    }
+  }
+
+  /**
+   * Fetch ICE servers from the server API.
+   * This includes TURN servers with time-limited credentials.
+   */
+  async fetchIceServers(): Promise<RTCIceServer[]> {
+    // Check if we have fresh ICE servers
+    if (this.iceServersFetched && Date.now() < this.iceServersExpiry) {
+      return this.iceServers;
     }
 
-    this.iceServers = baseStun;
-    // User ID is managed by the server via WebSocket
-    this.loadSettings();
+    try {
+      // Get API base URL
+      let apiUrl: string;
+      try {
+        apiUrl =
+          localStorage.getItem('disorder:api-url') ||
+          (import.meta.env.VITE_API_URL as string | undefined) ||
+          'http://localhost:3001';
+      } catch {
+        apiUrl = (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:3001';
+      }
+
+      // Get auth token
+      let token: string | null = null;
+      try {
+        token = localStorage.getItem('disorder:token');
+      } catch {
+        // Ignore
+      }
+
+      const response = await fetch(`${apiUrl}/api/turn/ice-servers`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (!response.ok) {
+        throw new Error(`ICE servers fetch failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.iceServers && Array.isArray(data.iceServers)) {
+        this.iceServers = data.iceServers;
+        this.iceServersFetched = true;
+        this.iceServersExpiry = Date.now() + VoiceClient.ICE_TTL_MS;
+
+        // Cache to localStorage
+        try {
+          localStorage.setItem(VoiceClient.ICE_CACHE_KEY, JSON.stringify({
+            servers: this.iceServers,
+            expiry: this.iceServersExpiry,
+          }));
+        } catch {
+          // Storage full, ignore
+        }
+
+        // Log TURN configuration
+        const turnServers = this.iceServers.filter(s => 
+          typeof s.urls === 'string' ? s.urls.startsWith('turn') :
+          Array.isArray(s.urls) ? s.urls.some(u => u.startsWith('turn')) : false
+        );
+        
+        if (turnServers.length > 0) {
+          console.log('[Voice] TURN server configured via API:', turnServers.length, 'server(s)');
+        } else {
+          console.log('[Voice] Using STUN only (no TURN configured on server)');
+        }
+      }
+    } catch (err) {
+      console.warn('[Voice] Failed to fetch ICE servers from API, using STUN fallback:', err);
+      // Keep using STUN servers
+      this.iceServers = this.getDefaultStunServers();
+    }
+
+    return this.iceServers;
+  }
+
+  /**
+   * Get current ICE servers (triggers refresh if expired)
+   */
+  async getIceServers(): Promise<RTCIceServer[]> {
+    if (!this.iceServersFetched || Date.now() >= this.iceServersExpiry) {
+      await this.fetchIceServers();
+    }
+    return this.iceServers;
   }
 
   // ── localStorage persistence ──────────────────────────────────────────────
@@ -611,7 +716,9 @@ export class VoiceClient {
   }
 
   private async createPeerConnection(peerId: string, initiator: boolean): Promise<void> {
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
+    // Ensure we have fresh ICE servers (includes TURN if configured)
+    const iceServers = await this.getIceServers();
+    const pc = new RTCPeerConnection({ iceServers });
     this.peers.set(peerId, pc);
 
     // Add local stream tracks

@@ -62,6 +62,7 @@ type MessageUpdateHandler = (data: { messageId: number; content: string; edited_
 type MessageDeleteHandler = (data: { messageId: number }) => void;
 type TypingHandler = (data: { channelId: number; userId: number; username: string }) => void;
 type PresenceHandler = (data: { userId: string; username: string; roomId: string; type: 'joined' | 'left' }) => void;
+type StatusUpdateHandler = (data: { userId: number; username: string; status: string; game?: string }) => void;
 type VoiceChannelUpdateHandler = (channels: { channelId: string; users: { clientId: string; username: string }[] }[]) => void;
 
 class RealtimeClient {
@@ -82,6 +83,7 @@ class RealtimeClient {
   private typingStartHandlers: Set<TypingHandler> = new Set();
   private typingStopHandlers: Set<TypingHandler> = new Set();
   private presenceHandlers: Set<PresenceHandler> = new Set();
+  private statusUpdateHandlers: Set<StatusUpdateHandler> = new Set();
   private voiceChannelUpdateHandlers: Set<VoiceChannelUpdateHandler> = new Set();
   private currentRoom: string | null = null;
   private username: string | null = null;
@@ -384,6 +386,12 @@ class RealtimeClient {
     return () => this.presenceHandlers.delete(handler);
   }
 
+  /** Subscribe to status updates (presence changes). */
+  onStatusUpdate(handler: StatusUpdateHandler): () => void {
+    this.statusUpdateHandlers.add(handler);
+    return () => this.statusUpdateHandlers.delete(handler);
+  }
+
   /**
    * Subscribe to voice channel occupancy updates.
    * Fired by the server whenever anyone joins or leaves a voice channel.
@@ -518,6 +526,15 @@ class RealtimeClient {
       case 'pong':
         // Heartbeat response — no action needed
         break;
+
+      case 'presence-update': {
+        // Handle real-time status updates from other users
+        if (message.data && typeof message.data === 'object') {
+          const data = message.data as { userId: number; username: string; status: string; game?: string };
+          this.statusUpdateHandlers.forEach((h: StatusUpdateHandler) => h(data));
+        }
+        break;
+      }
 
       default:
         // Suppress noisy unknown-type logs in production

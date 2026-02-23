@@ -8,8 +8,15 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true
-  }
+    "noEmit": true
+  },
+  "exclude": [
+    "node_modules",
+    "tests",
+    "tests/e2e",
+    "tests/stress",
+    "server-brain/tests",
+    "local-client",
+    "server-brain/dist"
+  ]
 }

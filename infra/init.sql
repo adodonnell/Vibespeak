@@ -1,14 +1,14 @@
 -- VibeSpeak Database Schema
 -- Initializes the database with required tables
 
--- Users table
+-- Users table (TeamSpeak-style: username only, no email/password auth)
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,  -- Random value for DB constraint, not used for auth
     display_name VARCHAR(100),
     avatar_url VARCHAR(500),
-    email VARCHAR(255) UNIQUE,
+    email VARCHAR(255) UNIQUE,  -- Optional, for notifications only (not used for login)
     status VARCHAR(20) DEFAULT 'offline',
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
@@ -498,6 +498,42 @@ CREATE TABLE IF NOT EXISTS auto_mod_rules (
 );
 
 CREATE INDEX IF NOT EXISTS idx_auto_mod_rules_server_id ON auto_mod_rules(server_id);
+
+-- ============================================
+-- DIRECT MESSAGES (1-to-1)
+-- ============================================
+
+-- DM conversations (unique pair of users, ordered by user ID to prevent duplicates)
+CREATE TABLE IF NOT EXISTS dm_conversations (
+    id SERIAL PRIMARY KEY,
+    user1_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,  -- Lower user ID
+    user2_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,  -- Higher user ID
+    created_at TIMESTAMP DEFAULT NOW(),
+    last_message_at TIMESTAMP,
+    last_message_preview VARCHAR(100),
+    UNIQUE(user1_id, user2_id),
+    CHECK (user1_id < user2_id)  -- Ensure ordering
+);
+
+CREATE INDEX IF NOT EXISTS idx_dm_conversations_user1 ON dm_conversations(user1_id);
+CREATE INDEX IF NOT EXISTS idx_dm_conversations_user2 ON dm_conversations(user2_id);
+
+-- DM messages
+CREATE TABLE IF NOT EXISTS dm_messages (
+    id SERIAL PRIMARY KEY,
+    conversation_id INTEGER NOT NULL REFERENCES dm_conversations(id) ON DELETE CASCADE,
+    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP,
+    is_edited BOOLEAN DEFAULT FALSE,
+    read_at TIMESTAMP  -- When the recipient read the message
+);
+
+CREATE INDEX IF NOT EXISTS idx_dm_messages_conversation_id ON dm_messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_dm_messages_sender_id ON dm_messages(sender_id);
+CREATE INDEX IF NOT EXISTS idx_dm_messages_created_at ON dm_messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_dm_messages_read_at ON dm_messages(read_at);
 
 -- ============================================
 -- SERVER MUTES

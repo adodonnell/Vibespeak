@@ -96,16 +96,6 @@ function isValidUsername(username: unknown): boolean {
   return typeof username === 'string' && /^[a-zA-Z0-9_]{3,32}$/.test(username);
 }
 
-// Email validation - used for registration
-export function isValidEmail(email: unknown): boolean {
-  if (typeof email !== 'string') return false;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-// Password validation - used for registration
-export function isValidPassword(password: unknown): boolean {
-  return typeof password === 'string' && password.length >= 8;
-}
 
 function isValidMessageContent(content: unknown): boolean {
   return typeof content === 'string' && content.length > 0 && content.length <= 4000;
@@ -324,19 +314,6 @@ async function main() {
         
         let userId: number | undefined;
         
-        // C1: Block guest from impersonating a registered account (one that has an email set)
-        if (getDbStatus()) {
-          try {
-            const { userService } = await import('./api/users.js');
-            const existingCheck = await userService.getUserByUsername(username) as any;
-            if (existingCheck && existingCheck.email) {
-              res.writeHead(409);
-              res.end(JSON.stringify({ error: 'That username belongs to a registered account. Please log in instead.' }));
-              return;
-            }
-          } catch (_) { /* DB error — let normal flow continue */ }
-        }
-        
         // Try to create/find user in PostgreSQL database
         if (getDbStatus()) {
           try {
@@ -428,7 +405,13 @@ async function main() {
         
         const { setPresence } = await import('./redis.js');
         await setPresence(jwtUser.id, status, game);
-        
+
+        // Broadcast presence update to all connected clients
+        signalingServer.broadcastToAll({
+          type: 'presence-update',
+          data: { userId: jwtUser.id, username: jwtUser.username, status, game }
+        });
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
       } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: 'Failed' })); }
@@ -1764,6 +1747,432 @@ async function main() {
         res.end(JSON.stringify(shares));
       } catch (err) {
         res.writeHead(200); res.end(JSON.stringify([]));
+      }
+      return;
+    }
+
+    // ============================================
+    // DIRECT MESSAGES API
+    // ============================================
+
+    // GET /api/dms - Get all DM conversations for current user
+    if (url.pathname === '/api/dms' && req.method === 'GET') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      if (!getDbStatus()) { res.writeHead(200); res.end(JSON.stringify([])); return; }
+      
+      try {
+        const { dmService } = await import('./api/dms.js');
+        const conversations = await dmService.getConversations(jwtUser.id);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(conversations));
+      } catch (err) { 
+        logger.error('Failed to get DM conversations:', err);
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Failed' })); 
+      }
+      return;
+    }
+
+    // GET /api/dms/unread - Get unread DM count
+    if (url.pathname === '/api/dms/unread' && req.method === 'GET') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      if (!getDbStatus()) { res.writeHead(200); res.end(JSON.stringify({ count: 0 })); return; }
+      
+      try {
+        const { dmService } = await import('./api/dms.js');
+        const count = await dmService.getUnreadCount(jwtUser.id);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ count }));
+      } catch (err) { 
+        res.writeHead(200); res.end(JSON.stringify({ count: 0 })); 
+      }
+      return;
+    }
+
+    // GET /api/dms/:userId - Get/create conversation with specific user
+    if (url.pathname.match(/^\/api\/dms\/\d+$/) && req.method === 'GET') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
+      
+      const otherUserId = parseInt(url.pathname.split('/')[3]);
+      
+      try {
+        const { dmService } = await import('./api/dms.js');
+        const conversation = await dmService.getOrCreateConversation(jwtUser.id, otherUserId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(conversation));
+      } catch (err) { 
+        logger.error('Failed to get/create DM conversation:', err);
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Failed' })); 
+      }
+      return;
+    }
+
+    // GET /api/dms/conversation/:id/messages - Get messages in a conversation
+    if (url.pathname.match(/^\/api\/dms\/conversation\/\d+\/messages$/) && req.method === 'GET') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
+      
+      const conversationId = parseInt(url.pathname.split('/')[4]);
+      const before = url.searchParams.get('before') ? parseInt(url.searchParams.get('before')!) : undefined;
+      
+      try {
+        const { dmService } = await import('./api/dms.js');
+        const messages = await dmService.getMessages(conversationId, jwtUser.id, { before });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(messages.reverse()));
+      } catch (err: any) { 
+        res.writeHead(400); res.end(JSON.stringify({ error: err.message || 'Failed' })); 
+      }
+      return;
+    }
+
+    // POST /api/dms/send - Send a DM to a user
+    if (url.pathname === '/api/dms/send' && req.method === 'POST') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
+      
+      try {
+        const { recipient_id, content } = await parseBody();
+        if (!recipient_id || !content) { 
+          res.writeHead(400); res.end(JSON.stringify({ error: 'recipient_id and content required' })); 
+          return; 
+        }
+        
+        const { dmService } = await import('./api/dms.js');
+        const message = await dmService.sendMessage(jwtUser.id, recipient_id, content);
+        
+        // Broadcast DM notification via WebSocket to recipient
+        signalingServer.broadcastToUser(recipient_id, {
+          type: 'dm-received',
+          data: {
+            id: message.id,
+            conversation_id: message.conversation_id,
+            sender_id: jwtUser.id,
+            sender_username: jwtUser.username,
+            content: message.content,
+            created_at: message.created_at,
+          }
+        });
+        
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(message));
+      } catch (err) { 
+        logger.error('Failed to send DM:', err);
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Failed to send message' })); 
+      }
+      return;
+    }
+
+    // POST /api/dms/:id/read - Mark conversation as read
+    if (url.pathname.match(/^\/api\/dms\/\d+\/read$/) && req.method === 'POST') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      if (!getDbStatus()) { res.writeHead(200); res.end(JSON.stringify({ success: true })); return; }
+      
+      const conversationId = parseInt(url.pathname.split('/')[3]);
+      
+      try {
+        const { dmService } = await import('./api/dms.js');
+        await dmService.markAsRead(conversationId, jwtUser.id);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (err) { 
+        res.writeHead(200); res.end(JSON.stringify({ success: true })); 
+      }
+      return;
+    }
+
+    // PATCH /api/dms/messages/:id - Edit a DM
+    if (url.pathname.match(/^\/api\/dms\/messages\/\d+$/) && req.method === 'PATCH') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
+      
+      const messageId = parseInt(url.pathname.split('/')[4]);
+      
+      try {
+        const { content } = await parseBody();
+        if (!content) { res.writeHead(400); res.end(JSON.stringify({ error: 'content required' })); return; }
+        
+        const { dmService } = await import('./api/dms.js');
+        const message = await dmService.editMessage(messageId, jwtUser.id, content);
+        
+        if (!message) {
+          res.writeHead(404); res.end(JSON.stringify({ error: 'Message not found' }));
+          return;
+        }
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(message));
+      } catch (err) { 
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Failed' })); 
+      }
+      return;
+    }
+
+    // DELETE /api/dms/messages/:id - Delete a DM
+    if (url.pathname.match(/^\/api\/dms\/messages\/\d+$/) && req.method === 'DELETE') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
+      
+      const messageId = parseInt(url.pathname.split('/')[4]);
+      
+      try {
+        const { dmService } = await import('./api/dms.js');
+        const deleted = await dmService.deleteMessage(messageId, jwtUser.id);
+        
+        if (!deleted) {
+          res.writeHead(404); res.end(JSON.stringify({ error: 'Message not found' }));
+          return;
+        }
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (err) { 
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Failed' })); 
+      }
+      return;
+    }
+
+    // ============================================
+    // FILE UPLOAD API
+    // ============================================
+
+    // GET /api/files/config - Get upload configuration
+    if (url.pathname === '/api/files/config' && req.method === 'GET') {
+      try {
+        const { fileService } = await import('./api/files.js');
+        const config = fileService.getConfig();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(config));
+      } catch (err) {
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Failed' }));
+      }
+      return;
+    }
+
+    // POST /api/files/upload - Upload a file
+    if (url.pathname === '/api/files/upload' && req.method === 'POST') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
+      
+      try {
+        // Parse multipart/form-data
+        const contentType = req.headers['content-type'] || '';
+        if (!contentType.includes('multipart/form-data')) {
+          res.writeHead(400); res.end(JSON.stringify({ error: 'Content-Type must be multipart/form-data' }));
+          return;
+        }
+        
+        // Extract boundary
+        const boundaryMatch = contentType.match(/boundary=(.+)/);
+        if (!boundaryMatch) {
+          res.writeHead(400); res.end(JSON.stringify({ error: 'No boundary in Content-Type' }));
+          return;
+        }
+        const boundary = boundaryMatch[1];
+        
+        // Read body
+        let body = Buffer.alloc(0);
+        for await (const chunk of req) {
+          body = Buffer.concat([body, chunk]);
+        }
+        
+        // Parse multipart data (simple implementation)
+        const parts = body.toString('binary').split(`--${boundary}`);
+        const files: any[] = [];
+        
+        for (const part of parts) {
+          if (part.includes('Content-Disposition')) {
+            const nameMatch = part.match(/name="([^"]+)"/);
+            const filenameMatch = part.match(/filename="([^"]+)"/);
+            
+            if (filenameMatch && nameMatch) {
+              const filename = filenameMatch[1];
+              const contentTypeMatch = part.match(/Content-Type:\s*([^\r\n]+)/i);
+              const mimeType = contentTypeMatch ? contentTypeMatch[1].trim() : 'application/octet-stream';
+              
+              // Find the start of actual data (after double CRLF)
+              const dataStart = part.indexOf('\r\n\r\n');
+              if (dataStart !== -1) {
+                const dataEnd = part.lastIndexOf('\r\n');
+                const fileData = part.substring(dataStart + 4, dataEnd);
+                
+                // Convert binary string back to buffer
+                const buffer = Buffer.from(fileData, 'binary');
+                
+                files.push({ filename, mimeType, buffer });
+              }
+            }
+          }
+        }
+        
+        if (files.length === 0) {
+          res.writeHead(400); res.end(JSON.stringify({ error: 'No file provided' }));
+          return;
+        }
+        
+        const { fileService } = await import('./api/files.js');
+        const uploadedFiles = [];
+        
+        for (const file of files) {
+          const attachment = await fileService.uploadFile(jwtUser.id, file.filename, file.buffer, file.mimeType);
+          uploadedFiles.push({
+            id: attachment.id,
+            filename: attachment.original_name,
+            url: attachment.url,
+            mime_type: attachment.mime_type,
+            size: attachment.size,
+          });
+        }
+        
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ files: uploadedFiles }));
+      } catch (err: any) {
+        logger.error('File upload failed:', err);
+        res.writeHead(400); res.end(JSON.stringify({ error: err.message || 'Upload failed' }));
+      }
+      return;
+    }
+
+    // GET /api/files/:id - Get file info
+    if (url.pathname.match(/^\/api\/files\/\d+$/) && req.method === 'GET') {
+      const fileId = parseInt(url.pathname.split('/')[3]);
+      
+      try {
+        const { fileService } = await import('./api/files.js');
+        const file = await fileService.getFile(fileId);
+        
+        if (!file) {
+          res.writeHead(404); res.end(JSON.stringify({ error: 'File not found' }));
+          return;
+        }
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(file));
+      } catch (err) {
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Failed' }));
+      }
+      return;
+    }
+
+    // DELETE /api/files/:id - Delete file
+    if (url.pathname.match(/^\/api\/files\/\d+$/) && req.method === 'DELETE') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      
+      const fileId = parseInt(url.pathname.split('/')[3]);
+      
+      try {
+        const { fileService } = await import('./api/files.js');
+        const deleted = await fileService.deleteFile(fileId, jwtUser.id);
+        
+        if (!deleted) {
+          res.writeHead(404); res.end(JSON.stringify({ error: 'File not found or not authorized' }));
+          return;
+        }
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (err) {
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Failed' }));
+      }
+      return;
+    }
+
+    // GET /uploads/* - Serve uploaded files
+    if (url.pathname.startsWith('/uploads/') && req.method === 'GET') {
+      try {
+        const { fileService } = await import('./api/files.js');
+        const filePath = url.pathname.substring('/uploads/'.length);
+        const fullPath = fileService.getFilePath(filePath);
+        
+        if (!fullPath) {
+          res.writeHead(404); res.end(JSON.stringify({ error: 'File not found' }));
+          return;
+        }
+        
+        // Read and serve the file
+        const fs = await import('fs');
+        const stat = fs.statSync(fullPath);
+        const ext = fullPath.split('.').pop()?.toLowerCase() || 'bin';
+        
+        const mimeTypes: Record<string, string> = {
+          'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
+          'gif': 'image/gif', 'webp': 'image/webp', 'svg': 'image/svg+xml',
+          'mp4': 'video/mp4', 'webm': 'video/webm', 'ogg': 'video/ogg',
+          'mp3': 'audio/mpeg', 'wav': 'audio/wav',
+          'pdf': 'application/pdf', 'txt': 'text/plain',
+          'md': 'text/markdown', 'csv': 'text/csv', 'json': 'application/json',
+          'zip': 'application/zip', 'rar': 'application/x-rar-compressed',
+        };
+        
+        const mimeType = mimeTypes[ext] || 'application/octet-stream';
+        
+        res.writeHead(200, {
+          'Content-Type': mimeType,
+          'Content-Length': stat.size,
+          'Cache-Control': 'public, max-age=31536000', // 1 year cache
+        });
+        
+        const readStream = fs.createReadStream(fullPath);
+        readStream.pipe(res);
+      } catch (err) {
+        res.writeHead(404); res.end(JSON.stringify({ error: 'File not found' }));
+      }
+      return;
+    }
+
+    // ============================================
+    // TURN SERVER API (NAT Traversal)
+    // ============================================
+
+    // GET /api/turn/ice-servers - Get ICE server configuration for WebRTC
+    if (url.pathname === '/api/turn/ice-servers' && req.method === 'GET') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      
+      try {
+        const { getIceServers } = await import('./api/turn.js');
+        const iceServers = getIceServers();
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          iceServers,
+          ttl: 86400, // 24 hours
+          generatedAt: new Date().toISOString()
+        }));
+      } catch (err) {
+        logger.error('Failed to get ICE servers:', err);
+        // Return STUN-only fallback
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+          ttl: 86400,
+          note: 'TURN server not configured - using STUN only'
+        }));
+      }
+      return;
+    }
+
+    // GET /api/turn/status - Get TURN server status (for monitoring)
+    if (url.pathname === '/api/turn/status' && req.method === 'GET') {
+      try {
+        const { getTurnStats } = await import('./api/turn.js');
+        const stats = getTurnStats();
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(stats));
+      } catch (err) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ configured: false, serverCount: 0, usingTimeLimitedCredentials: false }));
       }
       return;
     }

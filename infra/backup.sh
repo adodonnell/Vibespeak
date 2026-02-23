@@ -1,14 +1,14 @@
 #!/bin/bash
-# Disorder — Database Backup Script
+# VibeSpeak — Database Backup Script
 # Usage: ./backup.sh [--restore /path/to/backup.sql.gz]
 
 set -e
 
 # Configuration
-BACKUP_DIR="${BACKUP_DIR:-/opt/disorder/backups}"
-DB_CONTAINER="${DB_CONTAINER:-disorder-db}"
-DB_USER="${POSTGRES_USER:-disorder}"
-DB_NAME="${POSTGRES_DB:-disorder}"
+BACKUP_DIR="${BACKUP_DIR:-/opt/vibespeak/backups}"
+DB_CONTAINER="${DB_CONTAINER:-vibespeak-db}"
+DB_USER="${POSTGRES_USER:-vibespeak}"
+DB_NAME="${POSTGRES_DB:-vibespeak}"
 RETENTION_DAYS="${RETENTION_DAYS:-7}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
@@ -70,7 +70,7 @@ if [ "$1" == "--restore" ] && [ -n "$2" ]; then
 fi
 
 # Backup mode
-BACKUP_FILE="${BACKUP_DIR}/disorder_${TIMESTAMP}.sql"
+BACKUP_FILE="${BACKUP_DIR}/vibespeak_${TIMESTAMP}.sql"
 
 log_info "Starting database backup..."
 log_info "Database: $DB_NAME"
@@ -92,7 +92,7 @@ if [ $? -eq 0 ]; then
     
     # Clean old backups
     log_info "Cleaning backups older than $RETENTION_DAYS days..."
-    DELETED_COUNT=$(find "$BACKUP_DIR" -name "disorder_*.sql.gz" -mtime +$RETENTION_DAYS -delete -print | wc -l)
+    DELETED_COUNT=$(find "$BACKUP_DIR" -name "vibespeak_*.sql.gz" -mtime +$RETENTION_DAYS -delete -print | wc -l)
     
     if [ "$DELETED_COUNT" -gt 0 ]; then
         log_info "Deleted $DELETED_COUNT old backup(s)"
@@ -100,7 +100,7 @@ if [ $? -eq 0 ]; then
     
     # List current backups
     log_info "Current backups:"
-    ls -lh "$BACKUP_DIR"/disorder_*.sql.gz 2>/dev/null | tail -5
+    ls -lh "$BACKUP_DIR"/vibespeak_*.sql.gz 2>/dev/null | tail -5
     
     # Calculate total backup size
     TOTAL_SIZE=$(du -sh "$BACKUP_DIR" | cut -f1)
@@ -112,5 +112,3 @@ else
 fi
 
 log_info "Backup completed successfully!"
-</task_progress>
-</write_to_file>

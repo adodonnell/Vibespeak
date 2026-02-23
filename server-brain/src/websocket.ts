@@ -618,6 +618,22 @@ export class SignalingServer {
     });
   }
 
+  // Send a message to a specific user by their user ID (for DMs)
+  broadcastToUser(userId: number, message: object): boolean {
+    const messageStr = JSON.stringify(message);
+    let sent = false;
+    
+    // Find all WebSocket connections for this user ID
+    this.clientUserIds.forEach((id, ws) => {
+      if (id === userId && ws.readyState === WebSocket.OPEN) {
+        ws.send(messageStr);
+        sent = true;
+      }
+    });
+    
+    return sent;
+  }
+
   // ============================================
   // SCREEN SHARE MANAGEMENT WITH BANDWIDTH BUDGET
   // ============================================

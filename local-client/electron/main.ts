@@ -1,5 +1,5 @@
 import { app, BrowserWindow, session, Tray, Menu, globalShortcut, nativeImage, desktopCapturer, ipcMain } from 'electron';
-import path from 'path';
+import * as path from 'path';
 import { existsSync } from 'fs';
 
 let mainWindow: BrowserWindow | null = null;

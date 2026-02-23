@@ -2,7 +2,19 @@ import bcrypt from 'bcryptjs';
 import { query, queryOne } from '../db/database.js';
 import { logger } from '../utils/logger.js';
 
+// Public user interface (exposed via API - no password_hash)
 export interface User {
+  id: number;
+  username: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  status: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+// Internal user interface (includes password_hash for DB operations)
+interface InternalUser {
   id: number;
   username: string;
   password_hash: string;
@@ -13,72 +25,22 @@ export interface User {
   updated_at: Date;
 }
 
-export interface CreateUserInput {
-  username: string;
-  password: string;
-  display_name?: string;
-}
-
-export interface LoginInput {
-  username: string;
-  password: string;
-}
-
 class UserService {
-  async createUser(input: CreateUserInput): Promise<User> {
-    const passwordHash = await bcrypt.hash(input.password, 10);
-    
-    const result = await query(
-      `INSERT INTO users (username, password_hash, display_name, status)
-       VALUES ($1, $2, $3, 'online')
-       RETURNING *`,
-      [input.username, passwordHash, input.display_name || input.username]
-    );
-    
-    logger.info(`User created: ${input.username}`);
-    return result.rows[0] as User;
-  }
-
-  // Create a guest user (no password required)
+  // Create a guest user (username-only authentication - TeamSpeak style)
   async createGuestUser(username: string): Promise<User> {
-    // Generate a random password hash for guest users
+    // Generate a random password hash (not used for auth, just satisfies DB constraint)
     const passwordHash = await bcrypt.hash(Math.random().toString(36).substring(2), 10);
     
     const result = await query(
       `INSERT INTO users (username, password_hash, display_name, status)
        VALUES ($1, $2, $1, 'online')
        ON CONFLICT (username) DO UPDATE SET updated_at = NOW()
-       RETURNING *`,
+       RETURNING id, username, display_name, avatar_url, status, created_at, updated_at`,
       [username, passwordHash]
     );
     
-    logger.info(`Guest user: ${username}`);
+    logger.info(`Guest user created/found: ${username}`);
     return result.rows[0] as User;
-  }
-
-  async authenticate(input: LoginInput): Promise<User | null> {
-    const user = await queryOne<User>(
-      'SELECT * FROM users WHERE username = $1',
-      [input.username]
-    );
-    
-    if (!user) {
-      return null;
-    }
-    
-    const valid = await bcrypt.compare(input.password, user.password_hash);
-    if (!valid) {
-      return null;
-    }
-    
-    // Update status to online
-    await query(
-      'UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2',
-      ['online', user.id]
-    );
-    user.status = 'online';
-    
-    return user;
   }
 
   async getUserById(id: number): Promise<User | null> {
