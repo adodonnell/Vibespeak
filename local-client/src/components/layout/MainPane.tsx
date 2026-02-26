@@ -4,33 +4,11 @@ import ScreenShareViewer from '../stage/ScreenShareViewer';
 import ScreenShareStartModal, { ScreenShareQuality } from '../stage/ScreenShareStartModal';
 import MarkdownRenderer from '../ui/MarkdownRenderer';
 import FileUploader, { FilePreview, UploadedFile } from '../ui/FileUploader';
+import Stage from './Stage';
+import { VoiceUser, ChatMessage } from '../../types';
 import './MainPane.css';
 
-export interface ChatMessage {
-  id: string;
-  sender: string;
-  senderId?: number;
-  content: string;
-  timestamp: number;
-  edited?: boolean;
-  editedAt?: number;
-  reactions?: { emoji: string; count: number; users: number[]; reacted?: boolean }[];
-  replyCount?: number;
-  pinned?: boolean;
-  parentId?: string | null;
-  mentions?: number[];
-  replyToContent?: string;
-  replyToSender?: string;
-}
-
-export interface VoiceUser {
-  id: string;
-  username: string;
-  isMuted?: boolean;
-  isDeafened?: boolean;
-  isSpeaking?: boolean;
-  audioLevel?: number;
-}
+export type { ChatMessage };
 
 interface MainPaneProps {
   viewMode: 'text' | 'voice';
@@ -62,6 +40,12 @@ interface MainPaneProps {
   screenShareStream?: MediaStream | null;
   screenSharePresenter?: string;
   isLocalScreenShare?: boolean;
+  screenShares?: Map<string, {
+    stream: MediaStream;
+    presenterName: string;
+    isLocal: boolean;
+  }>;
+  currentUsername: string;
   onStartScreenShare?: () => void;
   onStopScreenShare?: () => void;
   onTypingStart?: () => void;
@@ -421,6 +405,8 @@ const MainPane: React.FC<MainPaneProps> = ({
   onSearchMessages, onOpenPins, onJoinVoice, onLeaveVoice,
   isInVoice = false, onMembersClick, currentUserId,
   screenShareStream, screenSharePresenter = '', isLocalScreenShare = false,
+  screenShares,
+  currentUsername = '',
   onStartScreenShare, onStopScreenShare,
   onTypingStart, onTypingStop,
 }) => {
@@ -826,31 +812,32 @@ const MainPane: React.FC<MainPaneProps> = ({
         </div>
         
         <div className="voice-content">
-          {/* Screen share area - sized to fit viewport */}
+          {/* Stage component for voice/screen share - handles multiple screen shares */}
           {hasScreenShare && (
-            <div className="voice-screen-share-area">
-              <div className="voice-screen-share-container">
-                {screenShareStream ? (
-                  <ScreenShareViewer stream={screenShareStream} presenterName={screenSharePresenter}
-                    isLocalShare={isLocalScreenShare} onStopSharing={onStopScreenShare} channelName={channelName} />
-                ) : isSharing && _shareStreamRef.current ? (
-                  <ScreenShareViewer 
-                    stream={_shareStreamRef.current} 
-                    presenterName="You"
-                    isLocalShare={true}
-                    onStopSharing={handleStopShare}
-                    channelName={channelName}
-                  />
-                ) : null}
-              </div>
-            </div>
+            <Stage
+              viewMode="voice"
+              channelName={channelName}
+              channelId={channelId}
+              voiceUsers={voiceUsers}
+              messages={messages}
+              onSendMessage={onSendMessage}
+              messageInput={messageInput}
+              onMessageInputChange={onMessageInputChange}
+              currentUsername={currentUsername}
+              screenShareStream={screenShareStream}
+              screenSharePresenter={screenSharePresenter}
+              isLocalScreenShare={isLocalScreenShare}
+              screenShares={screenShares}
+              onStartScreenShare={onStartScreenShare}
+              onStopScreenShare={onStopScreenShare}
+            />
           )}
           
           {shareError && <div className="share-error">{shareError}</div>}
           
-          {/* Users row below screen share */}
-          <div className={`voice-users-row ${hasScreenShare ? 'voice-users-row-has-share' : ''}`}>
-            {voiceUsers.length > 0 ? (
+          {/* Users row - shown when no screen share */}
+          {!hasScreenShare && (
+            voiceUsers.length > 0 ? (
               <div className="voice-users-flex">
                 {voiceUsers.map((u, i) => (
                   <div key={u.id || i} className={`voice-user-card compact ${u.isSpeaking ? 'speaking' : ''}`}>
@@ -862,14 +849,14 @@ const MainPane: React.FC<MainPaneProps> = ({
                   </div>
                 ))}
               </div>
-            ) : !hasScreenShare ? (
+            ) : (
               <div className="voice-empty voice-users-empty">
                 <div className="voice-empty-icon">🎤</div>
                 <h3>No one else is here</h3>
                 <p>Be the first to join this voice channel!</p>
               </div>
-            ) : null}
-          </div>
+            )
+          )}
           
           {/* Action buttons at bottom */}
           <div className="voice-actions voice-actions-row">

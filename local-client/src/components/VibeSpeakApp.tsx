@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { SidePane, ChannelPane, MainPane, RightDrawer, UserPanel, ChannelCategory, ChatMessage, Member } from './layout';
+import { SidePane, ChannelPane, MainPane, RightDrawer, UserPanel, ChannelCategory, ChatMessage, Member, Stage } from './layout';
 import { LoginScreen, ServerSetupScreen } from './auth';
 import '../styles/modals.css';
 import { AuthProvider, useAuth } from '../stores/AuthContext';
@@ -817,9 +817,11 @@ const VibeSpeakAppContent: React.FC = () => {
         onMembersClick={handleMembersClick}
         isInVoice={isInVoice}
         currentUserId={user.id}
+        currentUsername={user.username}
         screenShareStream={screenShareStream}
         screenSharePresenter={screenSharePresenter}
         isLocalScreenShare={isLocalScreenShare}
+        screenShares={screenShares}
         onStartScreenShare={handleStartScreenShare}
         onStopScreenShare={handleStopScreenShare}
         onTypingStart={handleTypingStart}

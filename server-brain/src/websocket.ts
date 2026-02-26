@@ -1,9 +1,118 @@
 import { WebSocketServer, WebSocket } from 'ws';
+import http from 'http';
 import { logger } from './utils/logger.js';
 import { userService } from './api/users.js';
 import { verifyToken } from './auth.js';
 import { createSecureContext } from 'tls';
 import { readFileSync, existsSync } from 'fs';
+import { randomUUID } from 'crypto';
+
+// ============================================
+// WebSocket RATE LIMITING
+// ============================================
+// Per-client rate limiting to prevent message flooding
+// Per-IP rate limiting to prevent connection spam
+
+interface WsRateLimitEntry {
+  messageCount: number;
+  resetAt: number;
+  blocked: boolean;
+}
+
+interface WsConnectionRateLimitEntry {
+  connectionCount: number;
+  resetAt: number;
+  blocked: boolean;
+}
+
+const wsRateLimitStore = new Map<string, WsRateLimitEntry>();
+const wsConnectionRateLimitStore = new Map<string, WsConnectionRateLimitEntry>();
+
+const WS_RATE_LIMIT_CONFIG = {
+  windowMs: 60 * 1000,           // 1 minute window
+  maxMessagesPerMinute: 120,     // Max messages per minute per client
+};
+
+const WS_CONNECTION_RATE_LIMIT_CONFIG = {
+  windowMs: 60 * 1000,           // 1 minute window
+  maxConnectionsPerMinute: 30,   // Max connections per minute per IP
+};
+
+function checkWsRateLimit(clientId: string): { allowed: boolean; remaining: number; resetIn: number } {
+  const now = Date.now();
+  const entry = wsRateLimitStore.get(clientId);
+  const maxRequests = WS_RATE_LIMIT_CONFIG.maxMessagesPerMinute;
+  
+  if (!entry || now > entry.resetAt) {
+    // Create new window
+    wsRateLimitStore.set(clientId, {
+      messageCount: 1,
+      resetAt: now + WS_RATE_LIMIT_CONFIG.windowMs,
+      blocked: false,
+    });
+    return { allowed: true, remaining: maxRequests - 1, resetIn: WS_RATE_LIMIT_CONFIG.windowMs };
+  }
+  
+  if (entry.messageCount >= maxRequests) {
+    entry.blocked = true;
+    return { allowed: false, remaining: 0, resetIn: entry.resetAt - now };
+  }
+  
+  entry.messageCount++;
+  return { allowed: true, remaining: maxRequests - entry.messageCount, resetIn: entry.resetAt - now };
+}
+
+// Check IP-based connection rate limit
+function checkWsConnectionRateLimit(ip: string): { allowed: boolean; resetIn: number } {
+  const now = Date.now();
+  const entry = wsConnectionRateLimitStore.get(ip);
+  const maxConnections = WS_CONNECTION_RATE_LIMIT_CONFIG.maxConnectionsPerMinute;
+  
+  if (!entry || now > entry.resetAt) {
+    // Create new window
+    wsConnectionRateLimitStore.set(ip, {
+      connectionCount: 1,
+      resetAt: now + WS_CONNECTION_RATE_LIMIT_CONFIG.windowMs,
+      blocked: false,
+    });
+    return { allowed: true, resetIn: WS_CONNECTION_RATE_LIMIT_CONFIG.windowMs };
+  }
+  
+  if (entry.connectionCount >= maxConnections) {
+    entry.blocked = true;
+    return { allowed: false, resetIn: entry.resetAt - now };
+  }
+  
+  entry.connectionCount++;
+  return { allowed: true, resetIn: entry.resetAt - now };
+}
+
+// Cleanup old rate limit entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  
+  // Clean up message rate limit store
+  const messageKeysToDelete: string[] = [];
+  for (const [key, entry] of wsRateLimitStore) {
+    if (now > entry.resetAt) {
+      messageKeysToDelete.push(key);
+    }
+  }
+  for (const key of messageKeysToDelete) {
+    wsRateLimitStore.delete(key);
+  }
+  
+  // Clean up connection rate limit store (prevents memory leak)
+  const connectionKeysToDelete: string[] = [];
+  for (const [key, entry] of wsConnectionRateLimitStore) {
+    if (now > entry.resetAt) {
+      connectionKeysToDelete.push(key);
+    }
+  }
+  for (const key of connectionKeysToDelete) {
+    wsConnectionRateLimitStore.delete(key);
+  }
+}, 5 * 60 * 1000);
 
 interface SignalingMessage {
   type: 'auth' | 'offer' | 'answer' | 'ice-candidate' | 'join' | 'leave' | 'user-joined' | 'user-left' | 'ping' | 'pong' | 'new-message' | 'message-updated' | 'message-deleted' | 'typing-start' | 'typing-stop' | 'screen-share-start' | 'screen-share-stop';
@@ -27,11 +136,9 @@ interface Room {
   usernames: Map<string, string>; // clientId -> username
 }
 
-// Generate unique ID using crypto
+// Generate unique ID using crypto (cryptographically secure)
 function generateClientId(): string {
-  const timestamp = Date.now().toString(36);
-  const randomPart = Math.random().toString(36).substring(2, 15);
-  return `user_${timestamp}_${randomPart}`;
+  return randomUUID();
 }
 
 export class SignalingServer {
@@ -69,7 +176,19 @@ export class SignalingServer {
       }
     })();
 
-    this.wss.on('connection', (ws: WebSocket) => {
+    this.wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
+      // Apply IP-based connection rate limiting to prevent connection spam
+      const clientIp = req.socket?.remoteAddress;
+      if (clientIp) {
+        const connRateLimit = checkWsConnectionRateLimit(clientIp);
+        if (!connRateLimit.allowed) {
+          logger.warn(`IP ${clientIp} exceeded connection rate limit, blocking`);
+          ws.send(JSON.stringify({ type: 'rate-limited', error: 'Too many connections, please try again later', resetIn: connRateLimit.resetIn }));
+          ws.close(1013, 'Connection rate limit exceeded');
+          return;
+        }
+      }
+
       const clientId = generateClientId();
       this.clientIds.set(ws, clientId);
       this.clientAuthenticated.set(ws, false); // Start as unauthenticated
@@ -242,6 +361,16 @@ export class SignalingServer {
       logger.warn(`Unauthenticated client ${clientId} attempted ${message.type}`);
       ws.send(JSON.stringify({ type: 'auth-required', error: 'Authentication required' }));
       return;
+    }
+
+    // Apply rate limiting for authenticated clients
+    if (clientId) {
+      const rateLimit = checkWsRateLimit(clientId);
+      if (!rateLimit.allowed) {
+        logger.warn(`Client ${clientId} exceeded rate limit, blocking`);
+        ws.send(JSON.stringify({ type: 'rate-limited', error: 'Rate limit exceeded', resetIn: rateLimit.resetIn }));
+        return;
+      }
     }
 
     // Input validation for message types that require specific fields
@@ -503,6 +632,8 @@ export class SignalingServer {
     if (clientId) {
       logger.info(`Client disconnected: ${clientId}`);
       this.clientIds.delete(ws);
+      // Clean up rate limit entry for this client
+      wsRateLimitStore.delete(clientId);
     }
     this.clientUsernames.delete(ws);
     this.clientUserIds.delete(ws);

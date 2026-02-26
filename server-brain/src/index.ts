@@ -7,7 +7,7 @@ import { memoryStore } from './db/memory-store.js';
 import { messageService } from './api/messages.js';
 import { verifyToken } from './auth.js';
 import http from 'http';
-import { randomBytes } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 
 // ============================================
 // RATE LIMITING SYSTEM
@@ -55,10 +55,16 @@ function checkRateLimit(key: string, maxRequests: number): { allowed: boolean; r
 // Cleanup old rate limit entries every 5 minutes
 setInterval(() => {
   const now = Date.now();
+  // Collect keys first to avoid iteration issues during deletion
+  const keysToDelete: string[] = [];
   for (const [key, entry] of rateLimitStore) {
     if (now > entry.resetAt) {
-      rateLimitStore.delete(key);
+      keysToDelete.push(key);
     }
+  }
+  // Delete collected keys
+  for (const key of keysToDelete) {
+    rateLimitStore.delete(key);
   }
 }, 5 * 60 * 1000);
 
@@ -117,7 +123,7 @@ const activeServers: Map<string, ServerConnection> = new Map();
 const sessions: Map<string, { userId: number; username: string }> = new Map();
 
 function generateSessionId(): string {
-  return `sess_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+  return randomUUID();
 }
 
 async function main() {
@@ -1153,7 +1159,13 @@ async function main() {
           if (servers.length === 0) {
             const defaultServer = await serverService.getServer(1);
             if (defaultServer) {
-              try { const { memberService } = await import('./api/members.js'); await memberService.joinServer(1, jwtUser.id); } catch (_) {}
+              try { 
+                const { memberService } = await import('./api/members.js'); 
+                await memberService.joinServer(1, jwtUser.id); 
+              } catch (err) {
+                // Silent fail - user may already be a member
+                logger.debug('Auto-join to default server failed:', err);
+              }
               servers = [defaultServer];
             }
           }
@@ -1280,24 +1292,13 @@ async function main() {
     }
 
     // GET /api/servers/:id/password-required - Check if server requires password
+    // Note: Always returns false for local credentials (TeamSpeak-style)
     if (url.pathname.match(/^\/api\/servers\/\d+\/password-required$/) && req.method === 'GET') {
       const serverId = parseInt(url.pathname.split('/')[3]);
       
-      if (!getDbStatus()) {
-        // In memory mode, no password required
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ requiresPassword: false, serverName: 'Main Server' }));
-        return;
-      }
-      
-      try {
-        const { memberService } = await import('./api/members.js');
-        const result = await memberService.getServerPasswordRequirement(serverId);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(result));
-      } catch (err) {
-        res.writeHead(404); res.end(JSON.stringify({ error: 'Server not found' }));
-      }
+      // Local credentials mode - no password required
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ requiresPassword: false, serverName: 'Server' }));
       return;
     }
 
@@ -1309,8 +1310,11 @@ async function main() {
       if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
       try {
         const { password } = await parseBody();
+        const clientIp = req.socket?.remoteAddress;
+        // Use LOCAL_ONLY mode - if true, use client IP instead of password (TeamSpeak-style local auth)
+        const useLocalOnly = process.env.LOCAL_ONLY === 'true';
         const { memberService } = await import('./api/members.js');
-        await memberService.joinServer(serverId, jwtUser.id, undefined, password);
+        await memberService.joinServer(serverId, jwtUser.id, undefined, useLocalOnly ? clientIp : password);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
       } catch (err) { 

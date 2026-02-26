@@ -1,12 +1,34 @@
 import { query, queryOne } from '../db/database.js';
 import { logger } from '../utils/logger.js';
-import * as bcrypt from 'bcryptjs';
 
-// Import Server interface for password checking
-interface ServerWithPassword {
-  id: number;
-  name: string;
-  password: string | null;
+// Server membership configuration
+// When LOCAL_ONLY=true, server join is open (TeamSpeak-style, no password required)
+// When LOCAL_ONLY=false or unset, password verification is required
+const LOCAL_ONLY = process.env.LOCAL_ONLY === 'true';
+
+// Log warning if LOCAL_ONLY is enabled (security-sensitive setting)
+if (LOCAL_ONLY) {
+  logger.warn('LOCAL_ONLY mode enabled - server joins are open without password. ' +
+    'This should ONLY be used for local development or isolated networks.');
+}
+
+// Allowed IP ranges for LOCAL_ONLY mode (defaults to localhost only)
+const LOCAL_ONLY_ALLOWED_IPS = process.env.LOCAL_ONLY_ALLOWED_IPS?.split(',') || ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
+
+// Check if IP is allowed for LOCAL_ONLY mode
+function isIpAllowed(ip: string | undefined): boolean {
+  if (!ip) return false;
+  
+  // Direct match
+  if (LOCAL_ONLY_ALLOWED_IPS.includes(ip)) return true;
+  
+  // IPv4 localhost range (127.0.0.0/8)
+  if (ip.startsWith('127.')) return true;
+  
+  // IPv6 localhost
+  if (ip === '::1' || ip.startsWith('::ffff:127.')) return true;
+  
+  return false;
 }
 
 export interface ServerMember {
@@ -34,8 +56,25 @@ export interface CreateMemberInput {
 }
 
 class MemberService {
-  // Check if server requires a password
+  // Get server info (for display purposes)
+  async getServerInfo(serverId: number): Promise<{ serverName: string }> {
+    const result = await queryOne<{ name: string }>(
+      'SELECT name FROM servers WHERE id = $1',
+      [serverId]
+    );
+    
+    return {
+      serverName: result?.name || 'Unknown Server'
+    };
+  }
+
+  // Check if server requires a password (for API compatibility)
+  // Always returns false unless LOCAL_ONLY is explicitly set to false
   async getServerPasswordRequirement(serverId: number): Promise<{ requiresPassword: boolean; serverName: string }> {
+    if (LOCAL_ONLY) {
+      return { requiresPassword: false, serverName: 'Server (Local Mode)' };
+    }
+    
     const result = await queryOne<{ password: string | null; name: string }>(
       'SELECT password, name FROM servers WHERE id = $1',
       [serverId]
@@ -47,71 +86,43 @@ class MemberService {
     };
   }
 
-  // Verify server password
-  async verifyServerPassword(serverId: number, password: string): Promise<boolean> {
-    const result = await queryOne<{ password: string | null }>(
-      'SELECT password FROM servers WHERE id = $1',
-      [serverId]
-    );
-    
-    if (!result || !result.password) {
-      // No password required
-      return true;
-    }
-    
-    // Compare password (supports both plaintext and bcrypt hashed passwords)
-    // For backwards compatibility, check plaintext first
-    if (result.password === password) {
-      return true;
-    }
-    
-    // Then check bcrypt hash
-    try {
-      return await bcrypt.compare(password, result.password);
-    } catch {
-      return false;
-    }
-  }
-
-  // Join a server (with optional password verification)
-  async joinServer(serverId: number, userId: number, nickname?: string, password?: string): Promise<ServerMember> {
+  // Join a server
+  // - LOCAL_ONLY=true: Allow open joins without password (TeamSpeak-style, local deployments only)
+  // - LOCAL_ONLY=false/unset: Require authentication/password
+  // @param clientIp - The client's IP address for LOCAL_ONLY mode security check
+  async joinServer(serverId: number, userId: number, nickname?: string, clientIp?: string): Promise<ServerMember> {
     // Check if already a member
     const existing = await this.getMember(serverId, userId);
     if (existing) {
       return existing;
     }
 
-    // Check if server requires password
-    const serverInfo = await queryOne<{ password: string | null }>(
-      'SELECT password FROM servers WHERE id = $1',
+    // Check if open server join is allowed (TeamSpeak-style local mode)
+    if (!LOCAL_ONLY) {
+      // Non-local mode: require password verification - block the join
+      throw new Error('Server join requires authentication. ' +
+        'Set LOCAL_ONLY=true for local deployments only.');
+    }
+
+    // Verify client IP is allowed in LOCAL_ONLY mode
+    if (!isIpAllowed(clientIp)) {
+      logger.warn(`Blocked server join from non-local IP: ${clientIp}`);
+      throw new Error('Server join not allowed from this network. ' +
+        'LOCAL_ONLY mode is restricted to local connections only.');
+    }
+
+    // Log warning about open join in local mode
+    logger.warn('[MemberService] OPEN SERVER JOIN: Local-only mode is enabled. ' +
+      'This should only be used for private/local deployments.');
+
+    // Verify server exists
+    const serverInfo = await queryOne<{ id: number }>(
+      'SELECT id FROM servers WHERE id = $1',
       [serverId]
     );
 
     if (!serverInfo) {
       throw new Error('Server not found');
-    }
-
-    // Verify password if required
-    if (serverInfo.password) {
-      if (!password) {
-        throw new Error('Password required');
-      }
-      
-      // Check plaintext first (backwards compatibility)
-      let validPassword = serverInfo.password === password;
-      
-      // Then check bcrypt hash
-      if (!validPassword) {
-        try {
-          validPassword = await bcrypt.compare(password, serverInfo.password);
-        } catch {
-          // Not a bcrypt hash, already checked plaintext
-        }
-      }
-      
-      if (!validPassword) {
-        throw new Error('Invalid password');
-      }
     }
 
     const result = await query(
@@ -121,7 +132,7 @@ class MemberService {
       [serverId, userId, nickname || null, JSON.stringify([])]
     );
 
-    logger.info(`User ${userId} joined server ${serverId}`);
+    logger.info(`User ${userId} joined server ${serverId} (local-only mode)`);
     return result.rows[0] as ServerMember;
   }
 
@@ -155,26 +166,29 @@ class MemberService {
     return result.rows as MemberWithUser[];
   }
 
-  // Get member count
-  async getMemberCount(serverId: number): Promise<number> {
-    const result = await queryOne<{ count: string }>(
-      'SELECT COUNT(*) as count FROM server_members WHERE server_id = $1',
-      [serverId]
+  // Get members in a voice channel
+  async getMembersInVoiceChannel(serverId: number, channelId: number): Promise<MemberWithUser[]> {
+    const result = await query(
+      `SELECT sm.*, u.username, u.display_name, u.avatar_url, u.email, u.status
+       FROM server_members sm
+       JOIN users u ON sm.user_id = u.id
+       WHERE sm.server_id = $1 AND u.status = $2
+       ORDER BY u.username`,
+      [serverId, `voice:${channelId}`]
     );
-    return parseInt(result?.count || '0', 10);
+    return result.rows as MemberWithUser[];
   }
 
   // Update member nickname
   async updateNickname(serverId: number, userId: number, nickname: string | null): Promise<ServerMember | null> {
     const result = await query(
-      `UPDATE server_members 
-       SET nickname = $1 
-       WHERE server_id = $2 AND user_id = $3 
-       RETURNING *`,
+      'UPDATE server_members SET nickname = $1 WHERE server_id = $2 AND user_id = $3 RETURNING *',
       [nickname, serverId, userId]
     );
     
-    if (result.rows.length === 0) return null;
+    if (result.rowCount === 0) {
+      return null;
+    }
     
     logger.debug(`Nickname updated for user ${userId} in server ${serverId}: ${nickname}`);
     return result.rows[0] as ServerMember;
@@ -183,17 +197,25 @@ class MemberService {
   // Update member roles
   async updateRoles(serverId: number, userId: number, roles: number[]): Promise<ServerMember | null> {
     const result = await query(
-      `UPDATE server_members 
-       SET roles = $1 
-       WHERE server_id = $2 AND user_id = $3 
-       RETURNING *`,
+      'UPDATE server_members SET roles = $1 WHERE server_id = $2 AND user_id = $3 RETURNING *',
       [JSON.stringify(roles), serverId, userId]
     );
     
-    if (result.rows.length === 0) return null;
+    if (result.rowCount === 0) {
+      return null;
+    }
     
     logger.debug(`Roles updated for user ${userId} in server ${serverId}: ${roles.join(', ')}`);
     return result.rows[0] as ServerMember;
+  }
+
+  // Delete member (ban)
+  async deleteMember(serverId: number, userId: number): Promise<void> {
+    await query(
+      'DELETE FROM server_members WHERE server_id = $1 AND user_id = $2',
+      [serverId, userId]
+    );
+    logger.info(`User ${userId} was removed from server ${serverId}`);
   }
 
   // Get member's roles

@@ -3,34 +3,15 @@ import VoiceDashboard from '../stage/VoiceDashboard';
 import ScreenShareViewer from '../stage/ScreenShareViewer';
 import ChatArea from '../ChatArea';
 import Pinboard from '../stage/Pinboard';
-import type { ChatMessage } from './MainPane';
+import type { VoiceUser, ChatMessage, ScreenShareInfo } from '../../types';
 
-export interface VoiceUser {
-  id: string;
-  username: string;
-  avatar?: string;
-  ping: number;
-  packetLoss: number;
-  isSpeaking: boolean;
-  audioLevel: number;
-  isMuted: boolean;
-  isDeafened: boolean;
-}
-
-export type { ChatMessage };
-
+export type { VoiceUser, ChatMessage, ScreenShareInfo };
 
 interface OnlineMember {
   id: number;
   username: string;
   status: string;
   inVoiceChannel?: string;
-}
-
-interface ScreenShareInfo {
-  stream: MediaStream;
-  presenterName: string;
-  isLocal: boolean;
 }
 
 interface StageProps {

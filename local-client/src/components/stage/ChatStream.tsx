@@ -1,16 +1,11 @@
 import React, { useRef, useEffect, useMemo, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import EmojiPickerButton from '../ui/EmojiPicker';
 import MarkdownRenderer from '../ui/MarkdownRenderer';
+import type { ChatMessage } from '../../types';
 
-export interface ChatMessage {
-  id: string;
-  sender: string;
-  content: string;
-  timestamp: number;
-  edited_at?: number;
-  reactions?: { emoji: string; count: number }[];
-  isAdmin?: boolean;
-}
+// Re-export for backward compatibility
+export type { ChatMessage };
 
 interface ChatStreamProps {
   messages: ChatMessage[];
@@ -55,6 +50,9 @@ const ChatStream: React.FC<ChatStreamProps> = ({
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
 
+  // Parent ref for the virtualizer
+  const parentRef = useRef<HTMLDivElement>(null);
+
   // Performance: Limit messages to prevent DOM overload
   const displayMessages = useMemo(() => {
     if (messages.length > maxMessages) {
@@ -62,6 +60,14 @@ const ChatStream: React.FC<ChatStreamProps> = ({
     }
     return messages;
   }, [messages, maxMessages]);
+
+  // Virtualizer for efficient rendering of large message lists
+  const virtualizer = useVirtualizer({
+    count: displayMessages.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 60, // Estimate average message height
+    overscan: 5, // Render 5 extra items above/below viewport
+  });
 
   // Only scroll to bottom on new messages
   useEffect(() => {
@@ -402,13 +408,42 @@ const ChatStream: React.FC<ChatStreamProps> = ({
 
   return (
     <div className="chat-stream" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-      <div className="chat-messages-dense">
+      <div 
+        className="chat-messages-dense" 
+        ref={parentRef}
+        style={{ overflow: 'auto', flex: 1 }}
+      >
         {displayMessages.length === 0 ? (
           <div className="no-messages">
             <p>No messages yet. Start the conversation!</p>
           </div>
         ) : (
-          displayMessages.map((msg, idx) => renderMessage(msg, idx))
+          <div
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              width: '100%',
+              position: 'relative',
+            }}
+          >
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const msg = displayMessages[virtualRow.index];
+              return (
+                <div
+                  key={msg.id}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                  data-index={virtualRow.index}
+                >
+                  {renderMessage(msg, virtualRow.index)}
+                </div>
+              );
+            })}
+          </div>
         )}
         <div ref={messagesEndRef} />
       </div>

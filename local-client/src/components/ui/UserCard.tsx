@@ -1,27 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import type { VoiceUser } from '../../types';
 
-export interface VoiceUser {
-  id: string;
-  username: string;
-  avatar?: string;
-  ping: number;
-  packetLoss: number;
-  isSpeaking: boolean;
-  audioLevel: number;
-  isMuted: boolean;
-  isDeafened: boolean;
-  isAdmin?: boolean;
-  // Extended stats
-  bytesSent?: number;
-  bytesReceived?: number;
-  packetsReceived?: number;
-  packetsLost?: number;
-  jitter?: number;
-  codec?: string;
-  bitrate?: number;
-  connectedSince?: number;
-  idleTime?: number;
-}
+// Re-export for backward compatibility
+export type { VoiceUser };
 
 interface UserCardProps {
   user: VoiceUser;

@@ -192,6 +192,8 @@ export class VoiceClient {
   
   // Screen share senders for renegotiation
   private screenShareSenders: Map<string, RTCRtpSender> = new Map();
+  // Guard flag to prevent concurrent screen share stop operations
+  private isStoppingScreenShare: boolean = false;
 
   // Auto-reconnect state
   private reconnectAttempts: number = 0;
@@ -628,15 +630,33 @@ export class VoiceClient {
     this.ws.onopen = () => {
       socketOpened = true;
       if (import.meta.env.DEV) {
-        console.log('[Voice] Connected to signaling server, sending join with username:', this.username);
+        console.log('[Voice] Connected to signaling server');
       }
-      // Send username along with join message - ensure username is always included
-      console.log('[Voice] WS sending join with username:', this.username);
-      this.ws?.send(JSON.stringify({
-        type: 'join',
-        roomId: this.roomId,
-        username: this.username || 'UNKNOWN_NO_USERNAME',
-      }));
+      
+      // IMPORTANT: Server requires JWT authentication before any other messages
+      // Get token from localStorage (set by AuthContext after login)
+      let token: string | null = null;
+      try {
+        token = localStorage.getItem('disorder:token');
+      } catch {
+        // localStorage unavailable
+      }
+      
+      if (token) {
+        console.log('[Voice] Sending auth with token');
+        this.ws?.send(JSON.stringify({
+          type: 'auth',
+          token: token,
+        }));
+      } else {
+        console.warn('[Voice] No auth token available - connection may be rejected');
+        // Fallback: try joining without auth (for dev/backward compatibility)
+        this.ws?.send(JSON.stringify({
+          type: 'join',
+          roomId: this.roomId,
+          username: this.username || 'UNKNOWN_NO_USERNAME',
+        }));
+      }
     };
 
     this.ws.onmessage = (event) => {
@@ -673,6 +693,35 @@ export class VoiceClient {
 
   private async handleSignalingMessage(message: any): Promise<void> {
     switch (message.type) {
+      case 'auth-success':
+        // Server confirmed our JWT auth - now we can join the voice channel
+        console.log('[Voice] Auth successful, joining room:', this.roomId, 'as', this.username);
+        this.ws?.send(JSON.stringify({
+          type: 'join',
+          roomId: this.roomId,
+          username: this.username || 'UNKNOWN_NO_USERNAME',
+        }));
+        break;
+
+      case 'auth-failed':
+        console.error('[Voice] Auth failed:', message.error);
+        this.notifyError('Voice authentication failed. Please log in again.');
+        break;
+
+      case 'auth-required':
+        console.warn('[Voice] Server requires authentication');
+        // Try to re-auth with token
+        let token: string | null = null;
+        try {
+          token = localStorage.getItem('disorder:token');
+        } catch {
+          // localStorage unavailable
+        }
+        if (token) {
+          this.ws?.send(JSON.stringify({ type: 'auth', token }));
+        }
+        break;
+
       case 'room-joined':
         if (import.meta.env.DEV) {
           console.log('[Voice] Joined room, users:', message.users);
@@ -721,11 +770,22 @@ export class VoiceClient {
     const pc = new RTCPeerConnection({ iceServers });
     this.peers.set(peerId, pc);
 
-    // Add local stream tracks
+    // Add local audio stream tracks
     if (this.localStream) {
       this.localStream.getTracks().forEach(track => {
         pc.addTrack(track, this.localStream!);
       });
+    }
+
+    // Also add screen share video track if actively sharing
+    // This ensures new peers joining after screen share started can see it
+    if (this.screenStream && this.isScreenSharing) {
+      const videoTrack = this.screenStream.getVideoTracks()[0];
+      if (videoTrack) {
+        const sender = pc.addTrack(videoTrack, this.screenStream);
+        this.screenShareSenders.set(peerId, sender);
+        console.log('[Voice] Added screen share track for new peer:', peerId);
+      }
     }
 
     // Handle incoming stream
@@ -1110,6 +1170,9 @@ export class VoiceClient {
       audioElement.srcObject = null;
       this.remoteAudioElements.delete(peerId);
     }
+    
+    // Clean up screen share sender for this peer
+    this.screenShareSenders.delete(peerId);
   }
 
   private getUser(_peerId: string): VoiceUser | undefined {
@@ -1645,15 +1708,14 @@ export class VoiceClient {
       // we need to create a new offer and exchange SDP with remote peers.
       // This is called "renegotiation".
       
-      this.peers.forEach(async (pc, peerId) => {
+      // IMPORTANT: Use for...of instead of forEach to properly await async operations
+      // forEach does NOT wait for async callbacks to complete!
+      for (const [peerId, pc] of this.peers.entries()) {
         try {
           // Add the video track to the connection
           const sender = pc.addTrack(videoTrack, this.screenStream!);
           
           // Store sender reference for later removal
-          if (!this.screenShareSenders) {
-            this.screenShareSenders = new Map();
-          }
           this.screenShareSenders.set(peerId, sender);
           
           // Check if we need to renegotiate
@@ -1686,7 +1748,7 @@ export class VoiceClient {
         } catch (err) {
           console.warn('[Voice] Could not add screen track to peer:', err);
         }
-      });
+      }
 
       // Handle when user stops sharing via browser UI (click "Stop sharing")
       videoTrack.onended = () => {
@@ -1779,25 +1841,68 @@ export class VoiceClient {
 
   // Stop screen share
   stopScreenShare(): void {
-    // Stop bandwidth monitoring
-    this.stopBandwidthMonitoring();
-
-    if (this.screenStream) {
-      this.screenStream.getTracks().forEach(track => track.stop());
-      this.screenStream = null;
+    // Guard against concurrent stop operations
+    if (this.isStoppingScreenShare) {
+      console.log('[Voice] Stop screen share already in progress, skipping');
+      return;
     }
-    this.isScreenSharing = false;
+    this.isStoppingScreenShare = true;
+    
+    try {
+      // Stop bandwidth monitoring
+      this.stopBandwidthMonitoring();
 
-    // Reset quality to default for next share
-    this.screenShareQuality = '1080p60';
-    this.bandwidthHistory = [];
-    this.lastVideoStats = null;
+      // Remove the video track from all peer connections via renegotiation
+      for (const [peerId, sender] of this.screenShareSenders.entries()) {
+        const pc = this.peers.get(peerId);
+        if (pc) {
+          try {
+            pc.removeTrack(sender);
+            console.log('[Voice] Removed screen share track from peer:', peerId);
+            
+            // Renegotiate to remove the video track
+            if (pc.signalingState === 'stable') {
+              pc.createOffer().then(offer => {
+                if (offer.sdp) {
+                  offer.sdp = this.applyOpusCodecSettings(offer.sdp);
+                }
+                return pc.setLocalDescription(offer);
+              }).then(() => {
+                this.ws?.send(JSON.stringify({
+                  type: 'offer',
+                  to: peerId,
+                  data: pc.localDescription,
+                }));
+              }).catch(err => {
+                console.warn('[Voice] Failed to renegotiate after removing screen share:', err);
+              });
+            }
+          } catch (err) {
+            console.warn('[Voice] Failed to remove screen share track:', err);
+          }
+        }
+      }
+      this.screenShareSenders.clear();
 
-    // Notify handlers
-    this.onScreenShareStopHandlers.forEach(handler => handler());
+      if (this.screenStream) {
+        this.screenStream.getTracks().forEach(track => track.stop());
+        this.screenStream = null;
+      }
+      this.isScreenSharing = false;
 
-    // Send stop event to server
-    this.sendScreenShareToServer(false);
+      // Reset quality to default for next share
+      this.screenShareQuality = '1080p60';
+      this.bandwidthHistory = [];
+      this.lastVideoStats = null;
+
+      // Notify handlers
+      this.onScreenShareStopHandlers.forEach(handler => handler());
+
+      // Send stop event to server
+      this.sendScreenShareToServer(false);
+    } finally {
+      this.isStoppingScreenShare = false;
+    }
   }
 
   // Get screen share constraints for 1080p 60fps
