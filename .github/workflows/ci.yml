@@ -1,264 +1,245 @@
-name: CI/CD Pipeline
+# ─────────────────────────────────────────────────────────────────────────────
+# VibeSpeak CI/CD Pipeline
+# 
+# Runs on: push to main, pull requests
+# Jobs:
+#   - lint: TypeScript type checking
+#   - test: Unit tests
+#   - build: Build server and client
+#   - e2e: End-to-end tests (on main only)
+#   - docker: Build and push Docker images (on tags)
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: CI/CD
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, master]
+    tags: ['v*']
   pull_request:
-    branches: [main]
-  release:
-    types: [published]
+    branches: [main, master]
 
 env:
   NODE_VERSION: '20'
+  PNPM_VERSION: '8'
 
 jobs:
-  # Build and Test Server
-  server:
+  # ── Lint & Type Check ───────────────────────────────────────────────────────
+  lint:
+    name: Lint & Type Check
     runs-on: ubuntu-latest
-    
     steps:
-      - uses: actions/checkout@v4
-      
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
-          
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-        
-      - name: Build server
-        run: pnpm --filter server-brain build
-        
-      - name: Run tests
+
+      - name: Type check server
+        run: pnpm --filter server-brain run typecheck
+
+      - name: Type check client
+        run: pnpm --filter local-client run build
+
+  # ── Unit Tests ──────────────────────────────────────────────────────────────
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run server tests
         run: pnpm --filter server-brain test
-        
-      - name: Upload server artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: server-brain-dist
-          path: server-brain/dist/
+        env:
+          NODE_ENV: test
+          JWT_SECRET: test-secret-key-for-ci-please-change-in-production
 
-  # Build Client (Web)
-  client:
+  # ── Build ───────────────────────────────────────────────────────────────────
+  build:
+    name: Build
     runs-on: ubuntu-latest
-    
+    needs: lint
     steps:
-      - uses: actions/checkout@v4
-      
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
-          
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-        
+
+      - name: Build server
+        run: pnpm --filter server-brain run build
+
       - name: Build client
-        run: pnpm --filter local-client build
-        
-      - name: Upload client artifacts
+        run: pnpm --filter local-client run build
+
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: local-client-dist
-          path: local-client/dist/
+          name: build
+          path: |
+            server-brain/dist
+            local-client/dist
+          retention-days: 7
 
-  # Build Docker Image
-  docker:
+  # ── E2E Tests ───────────────────────────────────────────────────────────────
+  e2e:
+    name: E2E Tests
     runs-on: ubuntu-latest
-    needs: [server]
-    
+    needs: [test, build]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: vibespeak
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: vibespeak_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
-      - uses: actions/checkout@v4
-      
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm --filter e2e exec playwright install --with-deps chromium
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build
+
+      - name: Run E2E tests
+        run: pnpm --filter e2e test
+        env:
+          DATABASE_URL: postgresql://vibespeak:testpassword@localhost:5432/vibespeak_test
+          JWT_SECRET: e2e-test-secret-key-for-ci
+          NODE_ENV: test
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: tests/e2e/playwright-report
+          retention-days: 7
+
+  # ── Docker Build ────────────────────────────────────────────────────────────
+  docker:
+    name: Docker Build & Push
+    runs-on: ubuntu-latest
+    needs: [test, build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        
-      - name: Login to GitHub Container Registry
-        if: github.event_name == 'release'
+
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}/server
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=sha,prefix=
-        
-      - name: Build and push Docker image
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build and push server-brain
         uses: docker/build-push-action@v5
         with:
           context: ./server-brain
-          push: ${{ github.event_name == 'release' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/server-brain:latest
+            ghcr.io/${{ github.repository }}/server-brain:${{ steps.version.outputs.VERSION }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Build Electron App - Windows
-  electron-windows:
-    runs-on: windows-latest
-    needs: [client]
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
-          
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-        
-      - name: Build Electron app (Windows)
-        run: pnpm --filter local-client electron:build:win
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: disorder-windows
-          path: |
-            local-client/release/*.exe
-            local-client/release/*.zip
-          retention-days: 30
-
-  # Build Electron App - Linux
-  electron-linux:
-    runs-on: ubuntu-latest
-    needs: [client]
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
-          
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-        
-      - name: Build Electron app (Linux)
-        run: pnpm --filter local-client electron:build:linux
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: disorder-linux
-          path: |
-            local-client/release/*.AppImage
-            local-client/release/*.deb
-            local-client/release/*.rpm
-            local-client/release/*.tar.gz
-          retention-days: 30
-
-  # Build Electron App - macOS (optional)
-  electron-mac:
-    runs-on: macos-latest
-    needs: [client]
-    if: github.event_name == 'release'
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
-          
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-        
-      - name: Build Electron app (macOS)
-        run: pnpm --filter local-client electron:build:mac
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_LINK: ${{ secrets.MAC_CERT }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
-          
-      - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: disorder-macos
-          path: |
-            local-client/release/*.dmg
-            local-client/release/*.zip
-          retention-days: 30
-
-  # Release - Create GitHub Release with artifacts
+  # ── Release ─────────────────────────────────────────────────────────────────
   release:
-    runs-on: ubuntu-latest
-    needs: [server, docker, electron-windows, electron-linux]
-    if: github.event_name == 'release'
-    
-    permissions:
-      contents: write
-      
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Download Windows artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: disorder-windows
-          path: release/windows/
-          
-      - name: Download Linux artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: disorder-linux
-          path: release/linux/
-      
-      - name: List release files
-        run: |
-          echo "### Windows Builds" >> $GITHUB_STEP_SUMMARY
-          ls -la release/windows/ >> $GITHUB_STEP_SUMMARY || echo "No Windows builds" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Linux Builds" >> $GITHUB_STEP_SUMMARY
-          ls -la release/linux/ >> $GITHUB_STEP_SUMMARY || echo "No Linux builds" >> $GITHUB_STEP_SUMMARY
-
-  # Deploy to Staging (develop branch)
-  deploy-staging:
+    name: Create Release
     runs-on: ubuntu-latest
     needs: [docker]
-    if: github.ref == 'refs/heads/develop'
-    
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     steps:
-      - name: Deploy to staging
-        run: |
-          echo "Deploying to staging environment..."
-          # Add your staging deployment commands here
-          # Example: ssh user@staging-server 'cd /opt/disorder && docker compose pull && docker compose up -d'
-          
-  # Deploy to Production (main branch)
-  deploy-production:
-    runs-on: ubuntu-latest
-    needs: [docker, release]
-    if: github.ref == 'refs/heads/main'
-    environment: production
-    
-    steps:
-      - name: Deploy to production
-        run: |
-          echo "Deploying to production environment..."
-          # Add your production deployment commands here
-          # Example: ssh user@prod-server 'cd /opt/disorder && docker compose pull && docker compose up -d'
-</task_progress>
-</write_to_file>
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.VERSION }}
+          name: VibeSpeak v${{ steps.version.outputs.VERSION }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}

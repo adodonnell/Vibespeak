@@ -1,5 +1,13 @@
 import { query, queryOne } from '../db/database.js';
 import { logger } from '../utils/logger.js';
+import * as bcrypt from 'bcryptjs';
+
+// Import Server interface for password checking
+interface ServerWithPassword {
+  id: number;
+  name: string;
+  password: string | null;
+}
 
 export interface ServerMember {
   id: number;
@@ -26,12 +34,84 @@ export interface CreateMemberInput {
 }
 
 class MemberService {
-  // Join a server
-  async joinServer(serverId: number, userId: number, nickname?: string): Promise<ServerMember> {
+  // Check if server requires a password
+  async getServerPasswordRequirement(serverId: number): Promise<{ requiresPassword: boolean; serverName: string }> {
+    const result = await queryOne<{ password: string | null; name: string }>(
+      'SELECT password, name FROM servers WHERE id = $1',
+      [serverId]
+    );
+    
+    return {
+      requiresPassword: !!result?.password,
+      serverName: result?.name || 'Unknown Server'
+    };
+  }
+
+  // Verify server password
+  async verifyServerPassword(serverId: number, password: string): Promise<boolean> {
+    const result = await queryOne<{ password: string | null }>(
+      'SELECT password FROM servers WHERE id = $1',
+      [serverId]
+    );
+    
+    if (!result || !result.password) {
+      // No password required
+      return true;
+    }
+    
+    // Compare password (supports both plaintext and bcrypt hashed passwords)
+    // For backwards compatibility, check plaintext first
+    if (result.password === password) {
+      return true;
+    }
+    
+    // Then check bcrypt hash
+    try {
+      return await bcrypt.compare(password, result.password);
+    } catch {
+      return false;
+    }
+  }
+
+  // Join a server (with optional password verification)
+  async joinServer(serverId: number, userId: number, nickname?: string, password?: string): Promise<ServerMember> {
     // Check if already a member
     const existing = await this.getMember(serverId, userId);
     if (existing) {
       return existing;
+    }
+
+    // Check if server requires password
+    const serverInfo = await queryOne<{ password: string | null }>(
+      'SELECT password FROM servers WHERE id = $1',
+      [serverId]
+    );
+
+    if (!serverInfo) {
+      throw new Error('Server not found');
+    }
+
+    // Verify password if required
+    if (serverInfo.password) {
+      if (!password) {
+        throw new Error('Password required');
+      }
+      
+      // Check plaintext first (backwards compatibility)
+      let validPassword = serverInfo.password === password;
+      
+      // Then check bcrypt hash
+      if (!validPassword) {
+        try {
+          validPassword = await bcrypt.compare(password, serverInfo.password);
+        } catch {
+          // Not a bcrypt hash, already checked plaintext
+        }
+      }
+      
+      if (!validPassword) {
+        throw new Error('Invalid password');
+      }
     }
 
     const result = await query(

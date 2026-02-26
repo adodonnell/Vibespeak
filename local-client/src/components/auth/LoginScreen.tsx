@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../stores/AuthContext';
 import { apiClient } from '../../services/api-client';
 import './LoginScreen.css';
+import '../../styles/modals.css';
 
 const GUEST_USERNAME_KEY = 'disorder:guest_username';
 
@@ -137,15 +138,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                 localStorage.removeItem('disorder:ws-url');
                 window.location.reload();
               }}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#00A8FC',
-                cursor: 'pointer',
-                fontSize: '13px',
-                textDecoration: 'underline',
-                padding: 0,
-              }}
+              className="link-button"
             >
               Change Server
             </button>

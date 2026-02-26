@@ -1,0 +1,315 @@
+/* ============================================================
+   Modals & Overlays — Modern glassmorphism styles
+   ============================================================ */
+
+/* ── Modal Backdrop ── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.15s var(--animation-smooth);
+}
+
+/* ── Modal Container ── */
+.modal-container {
+  background: #313338;
+  border-radius: 8px;
+  padding: 24px;
+  width: 440px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 
+    0 8px 32px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.05);
+  animation: scaleIn 0.2s var(--animation-spring);
+}
+
+/* ── Modal Header ── */
+.modal-header {
+  margin: 0 0 4px;
+  color: #F2F3F5;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.modal-subtitle {
+  margin: 0 0 20px;
+  color: #B5BAC1;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+/* ── Form Fields ── */
+.modal-label {
+  display: block;
+  margin-bottom: 8px;
+  color: #B5BAC1;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.modal-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: #1E1F22;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  padding: 10px 12px;
+  color: #DBDEE1;
+  font-size: 16px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.modal-input:focus {
+  border-color: #5865F2;
+  box-shadow: 0 0 0 2px rgba(88, 101, 242, 0.2);
+}
+
+.modal-input::placeholder {
+  color: #6D7178;
+}
+
+/* ── Modal Actions ── */
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+.modal-button {
+  border: none;
+  padding: 10px 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.modal-button:active {
+  transform: scale(0.98);
+}
+
+.modal-button-cancel {
+  background: transparent;
+  color: #DBDEE1;
+}
+
+.modal-button-cancel:hover {
+  text-decoration: underline;
+}
+
+.modal-button-primary {
+  background: #5865F2;
+  color: #fff;
+  font-weight: 600;
+  padding: 10px 24px;
+}
+
+.modal-button-primary:hover {
+  background: #4752C4;
+}
+
+.modal-button-primary:disabled {
+  background: #4e5058;
+  cursor: not-allowed;
+}
+
+/* ── Pinboard Drawer ── */
+.pinboard-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 360px;
+  max-width: calc(100vw - 240px);
+  height: 100vh;
+  background: #2B2D31;
+  border-left: 1px solid rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  z-index: 300;
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.3);
+  animation: slideInRight 0.2s var(--animation-smooth);
+}
+
+.pinboard-drawer.with-right-drawer {
+  right: 240px;
+}
+
+.pinboard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  height: 48px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.2);
+  flex-shrink: 0;
+}
+
+.pinboard-title {
+  font-weight: 700;
+  font-size: 15px;
+  color: #F2F3F5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pinboard-close {
+  background: none;
+  border: none;
+  color: #80848E;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.pinboard-close:hover {
+  color: #DBDEE1;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.pinboard-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.pinboard-empty {
+  padding: 24px;
+  color: #80848E;
+  text-align: center;
+  font-size: 14px;
+}
+
+.pinboard-empty-icon {
+  font-size: 40px;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+.pinboard-item {
+  padding: 8px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.pinboard-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.pinboard-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.pinboard-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #5865F2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.pinboard-sender {
+  font-weight: 600;
+  font-size: 13px;
+  color: #F2F3F5;
+}
+
+.pinboard-date {
+  font-size: 11px;
+  color: #80848E;
+  margin-left: auto;
+}
+
+.pinboard-message {
+  margin: 0;
+  font-size: 14px;
+  color: #DBDEE1;
+  line-height: 1.4;
+  padding-left: 32px;
+}
+
+/* ── Loading Spinner ── */
+.loading-spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ── Link Button ── */
+.link-button {
+  background: none;
+  border: none;
+  color: #00A8FC;
+  cursor: pointer;
+  font-size: 13px;
+  text-decoration: underline;
+  padding: 0;
+  transition: color 0.15s ease;
+}
+
+.link-button:hover {
+  color: #00D4FF;
+}
+
+/* ── Error Toast ── */
+.error-toast {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: rgba(242, 63, 67, 0.15);
+  border: 1px solid rgba(242, 63, 67, 0.3);
+  border-radius: 4px;
+  color: #F23F43;
+  font-size: 14px;
+  margin-bottom: 16px;
+  animation: fadeInDown 0.2s var(--animation-smooth);
+}
+
+.error-icon {
+  font-size: 16px;
+}
+
+/* ── Success Toast ── */
+.success-toast {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: rgba(35, 165, 89, 0.15);
+  border: 1px solid rgba(35, 165, 89, 0.3);
+  border-radius: 4px;
+  color: #23A559;
+  font-size: 14px;
+  margin-bottom: 16px;
+  animation: fadeInDown 0.2s var(--animation-smooth);
+}

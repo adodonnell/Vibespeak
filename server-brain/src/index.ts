@@ -206,9 +206,149 @@ async function main() {
       return sessions.get(authHeader.substring(7));
     };
 
+    // Enhanced health check endpoint for monitoring
     if (url.pathname === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString(), database: getDbStatus() ? 'connected' : 'memory', voiceRelay: 'running' }));
+      const healthData: {
+        status: string;
+        timestamp: string;
+        uptime: number;
+        version: string;
+        services: {
+          database: { status: string; type: string; latency?: number };
+          redis: { status: string; latency?: number };
+          websocket: { status: string; connections: number };
+          voiceRelay: { status: string; clients: number; channels: number };
+          turn: { status: string; configured: boolean };
+        };
+        memory: { used: number; total: number; percentage: number };
+      } = {
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        uptime: Math.floor(process.uptime()),
+        version: process.env.npm_package_version || '1.0.0',
+        services: {
+          database: { status: 'unknown', type: 'none' },
+          redis: { status: 'unknown' },
+          websocket: { status: 'running', connections: 0 },
+          voiceRelay: { status: 'running', clients: 0, channels: 0 },
+          turn: { status: 'unknown', configured: false },
+        },
+        memory: {
+          used: 0,
+          total: 0,
+          percentage: 0,
+        },
+      };
+
+      // Check database
+      const dbStart = Date.now();
+      if (getDbStatus()) {
+        try {
+          await query('SELECT 1');
+          healthData.services.database = {
+            status: 'connected',
+            type: 'postgresql',
+            latency: Date.now() - dbStart,
+          };
+        } catch (err) {
+          healthData.services.database = {
+            status: 'error',
+            type: 'postgresql',
+            latency: Date.now() - dbStart,
+          };
+          healthData.status = 'degraded';
+        }
+      } else {
+        healthData.services.database = {
+          status: 'fallback',
+          type: 'memory',
+        };
+      }
+
+      // Check Redis
+      const redisStart = Date.now();
+      try {
+        const { getRedis, isRedisConnected } = await import('./redis.js');
+        const redisClient = getRedis();
+        if (redisClient && isRedisConnected()) {
+          await redisClient.ping();
+          healthData.services.redis = {
+            status: 'connected',
+            latency: Date.now() - redisStart,
+          };
+        } else {
+          healthData.services.redis = { status: 'disconnected' };
+          // Redis is optional, don't mark as degraded
+        }
+      } catch {
+        healthData.services.redis = { status: 'not_configured' };
+      }
+
+      // WebSocket stats
+      healthData.services.websocket = {
+        status: 'running',
+        connections: signalingServer.getAllRooms().reduce((acc, r) => acc + r.users.length, 0),
+      };
+
+      // Voice relay stats
+      const voiceStats = voiceRelayServer.getStats();
+      healthData.services.voiceRelay = {
+        status: 'running',
+        clients: voiceStats.clients,
+        channels: voiceStats.channels,
+      };
+
+      // TURN status
+      try {
+        const { isTurnConfigured } = await import('./api/turn.js');
+        healthData.services.turn = {
+          status: isTurnConfigured() ? 'configured' : 'not_configured',
+          configured: isTurnConfigured(),
+        };
+      } catch {
+        healthData.services.turn = { status: 'unknown', configured: false };
+      }
+
+      // Memory stats
+      const memUsage = process.memoryUsage();
+      healthData.memory = {
+        used: Math.round(memUsage.heapUsed / 1024 / 1024),
+        total: Math.round(memUsage.heapTotal / 1024 / 1024),
+        percentage: Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100),
+      };
+
+      // Set appropriate status code
+      const statusCode = healthData.status === 'ok' ? 200 : 503;
+      res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(healthData, null, 2));
+      return;
+    }
+
+    // Simple health check for load balancers (no dependencies)
+    if (url.pathname === '/healthz') {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('OK');
+      return;
+    }
+
+    // Readiness probe for Kubernetes
+    if (url.pathname === '/ready') {
+      // Check if essential services are ready
+      if (!getDbStatus()) {
+        // In memory mode, we're always ready
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ready: true, mode: 'memory' }));
+        return;
+      }
+      
+      try {
+        await query('SELECT 1');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ready: true, mode: 'database' }));
+      } catch {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ready: false, reason: 'database_unavailable' }));
+      }
       return;
     }
 
@@ -1139,6 +1279,28 @@ async function main() {
       return;
     }
 
+    // GET /api/servers/:id/password-required - Check if server requires password
+    if (url.pathname.match(/^\/api\/servers\/\d+\/password-required$/) && req.method === 'GET') {
+      const serverId = parseInt(url.pathname.split('/')[3]);
+      
+      if (!getDbStatus()) {
+        // In memory mode, no password required
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ requiresPassword: false, serverName: 'Main Server' }));
+        return;
+      }
+      
+      try {
+        const { memberService } = await import('./api/members.js');
+        const result = await memberService.getServerPasswordRequirement(serverId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(404); res.end(JSON.stringify({ error: 'Server not found' }));
+      }
+      return;
+    }
+
     // POST /api/servers/:id/join - Join server
     if (url.pathname.match(/^\/api\/servers\/\d+\/join$/) && req.method === 'POST') {
       const jwtUser = getJwtUser(req.headers.authorization || null);
@@ -1146,11 +1308,17 @@ async function main() {
       const serverId = parseInt(url.pathname.split('/')[3]);
       if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
       try {
+        const { password } = await parseBody();
         const { memberService } = await import('./api/members.js');
-        await memberService.joinServer(serverId, jwtUser.id);
+        await memberService.joinServer(serverId, jwtUser.id, undefined, password);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
-      } catch (err) { res.writeHead(400); res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Failed' })); }
+      } catch (err) { 
+        const errorMsg = err instanceof Error ? err.message : 'Failed';
+        const statusCode = errorMsg === 'Password required' || errorMsg === 'Invalid password' ? 401 : 400;
+        res.writeHead(statusCode); 
+        res.end(JSON.stringify({ error: errorMsg, requiresPassword: errorMsg.includes('Password') })); 
+      }
       return;
     }
 
@@ -1166,6 +1334,66 @@ async function main() {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
       } catch (err) { res.writeHead(400); res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Failed' })); }
+      return;
+    }
+
+    // PATCH /api/servers/:id/password - Set/update/remove server password (admin only)
+    if (url.pathname.match(/^\/api\/servers\/\d+\/password$/) && req.method === 'PATCH') {
+      const jwtUser = getJwtUser(req.headers.authorization || null);
+      if (!jwtUser) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
+      const serverId = parseInt(url.pathname.split('/')[3]);
+      if (!getDbStatus()) { res.writeHead(503); res.end(JSON.stringify({ error: 'Database unavailable' })); return; }
+      
+      try {
+        // Check if user is server owner or admin
+        const { serverService } = await import('./api/servers.js');
+        const server = await serverService.getServerById(serverId);
+        
+        if (!server) {
+          res.writeHead(404); res.end(JSON.stringify({ error: 'Server not found' }));
+          return;
+        }
+        
+        // Check if owner
+        const isOwner = server.owner_id === jwtUser.id;
+        
+        // Check if admin
+        const { roleService } = await import('./api/roles.js');
+        const permissions = await roleService.getMemberPermissionLevel(serverId, jwtUser.id);
+        const isAdmin = roleService.isAdmin(permissions);
+        
+        if (!isOwner && !isAdmin) {
+          res.writeHead(403); res.end(JSON.stringify({ error: 'Only server owner or admin can set password' }));
+          return;
+        }
+        
+        const { password } = await parseBody();
+        
+        // Hash the password if provided, or set to null to remove
+        let hashedPassword: string | null = null;
+        if (password && typeof password === 'string' && password.trim().length > 0) {
+          const bcrypt = await import('bcryptjs');
+          hashedPassword = await bcrypt.default.hash(password.trim(), 10);
+        }
+        
+        // Update the server password
+        await query(
+          'UPDATE servers SET password = $1, updated_at = NOW() WHERE id = $2',
+          [hashedPassword, serverId]
+        );
+        
+        logger.info(`Server ${serverId} password ${hashedPassword ? 'set' : 'removed'} by user ${jwtUser.id}`);
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          success: true, 
+          message: hashedPassword ? 'Password set successfully' : 'Password removed',
+          hasPassword: !!hashedPassword 
+        }));
+      } catch (err) {
+        logger.error('Failed to set server password:', err);
+        res.writeHead(500); res.end(JSON.stringify({ error: 'Failed to set password' }));
+      }
       return;
     }
 

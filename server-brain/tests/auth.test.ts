@@ -14,7 +14,7 @@ describe('Auth Module', () => {
       expect(validateUsername('ValidUser').valid).toBe(true);
       expect(validateUsername('user123').valid).toBe(true);
       expect(validateUsername('user_name').valid).toBe(true);
-      expect(validateUsername('ab').valid).toBe(true); // exactly 2 chars (minimum is 3 but this passes regex)
+      expect(validateUsername('abc').valid).toBe(true); // exactly 3 chars (minimum)
     });
 
     test('rejects short usernames (< 3 chars)', () => {

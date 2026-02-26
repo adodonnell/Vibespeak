@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { SidePane, ChannelPane, MainPane, RightDrawer, UserPanel, ChannelCategory, ChatMessage, Member } from './layout';
 import { LoginScreen, ServerSetupScreen } from './auth';
+import '../styles/modals.css';
 import { AuthProvider, useAuth } from '../stores/AuthContext';
 import { serverClient } from '../services/server-client';
 import { apiClient } from '../services/api-client';
@@ -867,17 +868,11 @@ const VibeSpeakAppContent: React.FC = () => {
 
       {/* Create Server modal — replaces prompt() for Electron compatibility */}
       {createServerOpen && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-        }} onClick={() => setCreateServerOpen(false)}>
-          <div style={{
-            background: '#313338', borderRadius: 8, padding: 24, width: 440,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
-          }} onClick={e => e.stopPropagation()}>
-            <h2 style={{ margin: '0 0 4px', color: '#F2F3F5', fontSize: 20, fontWeight: 700 }}>Create a server</h2>
-            <p style={{ margin: '0 0 20px', color: '#B5BAC1', fontSize: 14 }}>Give your server a name</p>
-            <label style={{ display: 'block', marginBottom: 8, color: '#B5BAC1', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+        <div className="modal-backdrop" onClick={() => setCreateServerOpen(false)}>
+          <div className="modal-container" onClick={e => e.stopPropagation()}>
+            <h2 className="modal-header">Create a server</h2>
+            <p className="modal-subtitle">Give your server a name</p>
+            <label className="modal-label">
               Server name
             </label>
             <input
@@ -887,23 +882,15 @@ const VibeSpeakAppContent: React.FC = () => {
               onChange={e => setNewServerName(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') handleCreateServerConfirm(); if (e.key === 'Escape') setCreateServerOpen(false); }}
               placeholder="My awesome server"
-              style={{
-                width: '100%', boxSizing: 'border-box',
-                background: '#1E1F22', border: '1px solid rgba(255,255,255,0.1)',
-                borderRadius: 4, padding: '10px 12px', color: '#DBDEE1', fontSize: 16,
-                outline: 'none', marginBottom: 24,
-              }}
+              className="modal-input"
             />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <button onClick={() => setCreateServerOpen(false)} style={{
-                background: 'transparent', border: 'none', color: '#DBDEE1',
-                padding: '10px 20px', borderRadius: 4, cursor: 'pointer', fontSize: 14, fontWeight: 500,
-              }}>Cancel</button>
-              <button onClick={handleCreateServerConfirm} disabled={!newServerName.trim()} style={{
-                background: newServerName.trim() ? '#5865F2' : '#4e5058',
-                border: 'none', color: '#fff', padding: '10px 24px', borderRadius: 4,
-                cursor: newServerName.trim() ? 'pointer' : 'not-allowed', fontSize: 14, fontWeight: 600,
-              }}>Create</button>
+            <div className="modal-actions">
+              <button onClick={() => setCreateServerOpen(false)} className="modal-button modal-button-cancel">
+                Cancel
+              </button>
+              <button onClick={handleCreateServerConfirm} disabled={!newServerName.trim()} className="modal-button modal-button-primary">
+                Create
+              </button>
             </div>
           </div>
         </div>
@@ -911,33 +898,27 @@ const VibeSpeakAppContent: React.FC = () => {
 
       {/* Pinned messages drawer */}
       {pinsOpen && (
-        <div style={{
-          position: 'fixed', top: 0, right: rightDrawerOpen ? 240 : 0, width: 360, height: '100vh',
-          background: '#2B2D31', borderLeft: '1px solid rgba(0,0,0,0.2)',
-          display: 'flex', flexDirection: 'column', zIndex: 300, boxShadow: '-4px 0 12px rgba(0,0,0,0.3)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', height: 48, borderBottom: '1px solid rgba(0,0,0,0.2)', flexShrink: 0 }}>
-            <span style={{ fontWeight: 700, fontSize: 15, color: '#F2F3F5' }}>📌 Pinned Messages</span>
-            <button onClick={() => setPinsOpen(false)} style={{ background: 'none', border: 'none', color: '#80848E', cursor: 'pointer', fontSize: 18, padding: '4px 8px', borderRadius: 4 }}>✕</button>
+        <div className={`pinboard-drawer ${rightDrawerOpen ? 'with-right-drawer' : ''}`}>
+          <div className="pinboard-header">
+            <span className="pinboard-title">📌 Pinned Messages</span>
+            <button onClick={() => setPinsOpen(false)} className="pinboard-close">✕</button>
           </div>
-          <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+          <div className="pinboard-content">
             {pinnedMessages.length === 0 ? (
-              <div style={{ padding: 24, color: '#80848E', textAlign: 'center', fontSize: 14 }}>
-                <div style={{ fontSize: 40, marginBottom: 12 }}>📌</div>
+              <div className="pinboard-empty">
+                <div className="pinboard-empty-icon">📌</div>
                 No pinned messages yet.
               </div>
             ) : pinnedMessages.map(msg => (
-              <div key={msg.id} style={{ padding: '8px 16px', borderBottom: '1px solid rgba(255,255,255,0.04)', cursor: 'pointer' }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
-                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                  <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#5865F2', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: '#fff' }}>
+              <div key={msg.id} className="pinboard-item">
+                <div className="pinboard-item-header">
+                  <div className="pinboard-avatar">
                     {msg.sender.charAt(0).toUpperCase()}
                   </div>
-                  <span style={{ fontWeight: 600, fontSize: 13, color: '#F2F3F5' }}>{msg.sender}</span>
-                  <span style={{ fontSize: 11, color: '#80848E', marginLeft: 'auto' }}>{new Date(msg.timestamp).toLocaleDateString()}</span>
+                  <span className="pinboard-sender">{msg.sender}</span>
+                  <span className="pinboard-date">{new Date(msg.timestamp).toLocaleDateString()}</span>
                 </div>
-                <p style={{ margin: 0, fontSize: 14, color: '#DBDEE1', lineHeight: 1.4, paddingLeft: 32 }}>{msg.content}</p>
+                <p className="pinboard-message">{msg.content}</p>
               </div>
             ))}
           </div>
