@@ -434,8 +434,15 @@ const VibeSpeakAppContent: React.FC = () => {
           : vc
       ));
       setIsInVoice(false); setCurrentVoiceChannelName(undefined);
+      // Update refs immediately to prevent race condition with voice-channel-update
+      isInVoiceRef.current = false;
+      currentVoiceChannelNameRef.current = undefined;
     }
     try {
+      // Update refs BEFORE joining so voice-channel-update handler has correct values
+      isInVoiceRef.current = true;
+      currentVoiceChannelNameRef.current = channel.name;
+      
       await voiceClient.joinVoiceChannel(channel.name, undefined, user?.username);
       setIsInVoice(true); setCurrentVoiceChannelName(channel.name);
       if (user) {
@@ -640,6 +647,10 @@ const VibeSpeakAppContent: React.FC = () => {
   const handleJoinVoice = useCallback(async () => {
     if (!user) return;
     try {
+      // Update refs BEFORE joining so voice-channel-update handler has correct values
+      isInVoiceRef.current = true;
+      currentVoiceChannelNameRef.current = currentChannelName;
+      
       await voiceClient.joinVoiceChannel(currentChannelName, undefined, user.username);
       setIsInVoice(true); setCurrentVoiceChannelName(currentChannelName);
       addLocalUserToVoice(currentChannelName, user.username);
@@ -650,6 +661,9 @@ const VibeSpeakAppContent: React.FC = () => {
     if (!user) return;
     voiceClient.leaveVoiceChannel();
     if (currentVoiceChannelName) removeLocalUserFromVoice(currentVoiceChannelName, user.username);
+    // Update refs immediately to prevent race condition with voice-channel-update
+    isInVoiceRef.current = false;
+    currentVoiceChannelNameRef.current = undefined;
     setIsInVoice(false); setCurrentVoiceChannelName(undefined);
   }, [user, currentVoiceChannelName, removeLocalUserFromVoice]);
 
