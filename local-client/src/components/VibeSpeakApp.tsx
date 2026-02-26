@@ -149,7 +149,7 @@ const VibeSpeakAppContent: React.FC = () => {
 
     const unsubVoice = realtimeClient.onVoiceChannelUpdate((channels) => {
       // Server sends users as { clientId, username }[] — map to VoiceChannelUser objects
-      // The server is the AUTHORITY on who is in which channel - trust it completely
+      // The server is the AUTHORITY on who is in which channel
       setVoiceChannels(prev => {
         // Validate channels is an array
         if (!Array.isArray(channels)) {
@@ -157,8 +157,13 @@ const VibeSpeakAppContent: React.FC = () => {
           return prev;
         }
         
+        // Get current local user state from refs (avoids stale closure)
+        const currentUser = userRef.current;
+        const currentChannel = currentVoiceChannelNameRef.current;
+        const inVoice = isInVoiceRef.current;
+        
         // Build a map of channel -> deduplicated users by username
-        const newChannels = channels.map(ch => {
+        let newChannels = channels.map(ch => {
           // Deduplicate users by username in each channel
           const seenUsernames = new Set<string>();
           const dedupedUsers: any[] = [];
@@ -178,6 +183,39 @@ const VibeSpeakAppContent: React.FC = () => {
             users: dedupedUsers,
           };
         });
+        
+        // IMPORTANT: Server broadcasts don't include the local user immediately
+        // because the voice signaling WebSocket is separate from realtimeClient.
+        // We must add the local user ourselves if we're in a voice channel.
+        if (currentUser && inVoice && currentChannel) {
+          // Check if local user is already in the channel
+          const channelIdx = newChannels.findIndex(ch => ch.channelId === currentChannel);
+          if (channelIdx >= 0) {
+            const existingUsers = newChannels[channelIdx].users;
+            const alreadyInChannel = existingUsers.some((u: any) => u.username === currentUser.username);
+            if (!alreadyInChannel) {
+              // Add local user to their channel
+              newChannels[channelIdx] = {
+                ...newChannels[channelIdx],
+                users: [...existingUsers, { 
+                  clientId: `local-${currentUser.username}`, 
+                  username: currentUser.username, 
+                  displayName: currentUser.username 
+                }]
+              };
+            }
+          } else {
+            // Channel doesn't exist yet - create it with local user
+            newChannels.push({
+              channelId: currentChannel,
+              users: [{ 
+                clientId: `local-${currentUser.username}`, 
+                username: currentUser.username, 
+                displayName: currentUser.username 
+              }]
+            });
+          }
+        }
         
         // Filter out empty channels to keep state clean
         return newChannels.filter(ch => ch.users.length > 0);
