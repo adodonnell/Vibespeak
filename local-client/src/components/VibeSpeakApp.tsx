@@ -149,11 +149,7 @@ const VibeSpeakAppContent: React.FC = () => {
 
     const unsubVoice = realtimeClient.onVoiceChannelUpdate((channels) => {
       // Server sends users as { clientId, username }[] — map to VoiceChannelUser objects
-      // Use refs to get current values (avoids stale closure issues)
-      const currentUser = userRef.current;
-      const currentChannel = currentVoiceChannelNameRef.current;
-      const inVoice = isInVoiceRef.current;
-      
+      // The server is the AUTHORITY on who is in which channel - trust it completely
       setVoiceChannels(prev => {
         // Validate channels is an array
         if (!Array.isArray(channels)) {
@@ -162,7 +158,7 @@ const VibeSpeakAppContent: React.FC = () => {
         }
         
         // Build a map of channel -> deduplicated users by username
-        let newChannels = channels.map(ch => {
+        const newChannels = channels.map(ch => {
           // Deduplicate users by username in each channel
           const seenUsernames = new Set<string>();
           const dedupedUsers: any[] = [];
@@ -182,30 +178,6 @@ const VibeSpeakAppContent: React.FC = () => {
             users: dedupedUsers,
           };
         });
-        
-        // If we're in a voice channel, manage local user presence across all channels
-        if (currentUser && inVoice) {
-          // Remove local user from ALL channels first (handles channel switches)
-          newChannels = newChannels.map(ch => ({
-            ...ch,
-            users: ch.users.filter((u: any) => u.username !== currentUser.username)
-          }));
-          
-          // Then add local user to their CURRENT channel only
-          const localChannelIdx = newChannels.findIndex(
-            (ch: any) => ch.channelId === currentChannel
-          );
-          
-          if (localChannelIdx >= 0 && currentChannel) {
-            newChannels[localChannelIdx] = {
-              ...newChannels[localChannelIdx],
-              users: [
-                ...newChannels[localChannelIdx].users,
-                { clientId: `local-${currentUser.username}`, username: currentUser.username, displayName: currentUser.username }
-              ]
-            };
-          }
-        }
         
         // Filter out empty channels to keep state clean
         return newChannels.filter(ch => ch.users.length > 0);
@@ -426,37 +398,25 @@ const VibeSpeakAppContent: React.FC = () => {
   const handleChannelDoubleClick = useCallback(async (channel: any) => {
     if (channel.type !== 'voice') return;
     if (isInVoice && currentVoiceChannelName === channel.name) return;
-    if (isInVoice && user && currentVoiceChannelName) {
+    
+    // If already in a different channel, leave it first
+    if (isInVoice && currentVoiceChannelName) {
       voiceClient.leaveVoiceChannel();
-      setVoiceChannels(prev => prev.map((vc: any) =>
-        vc.channelId === currentVoiceChannelName
-          ? { ...vc, users: vc.users.filter((u: any) => (typeof u === 'string' ? u : u.username) !== user.username) }
-          : vc
-      ));
-      setIsInVoice(false); setCurrentVoiceChannelName(undefined);
-      // Update refs immediately to prevent race condition with voice-channel-update
+      setIsInVoice(false);
+      setCurrentVoiceChannelName(undefined);
       isInVoiceRef.current = false;
       currentVoiceChannelNameRef.current = undefined;
     }
+    
     try {
-      // Update refs BEFORE joining so voice-channel-update handler has correct values
+      // Update refs BEFORE joining
       isInVoiceRef.current = true;
       currentVoiceChannelNameRef.current = channel.name;
       
       await voiceClient.joinVoiceChannel(channel.name, undefined, user?.username);
-      setIsInVoice(true); setCurrentVoiceChannelName(channel.name);
-      if (user) {
-        const newUser = { clientId: `local-${user.username}`, username: user.username, displayName: user.username };
-        setVoiceChannels(prev => {
-          const ex = prev.find((vc: any) => vc.channelId === channel.name);
-          if (ex) {
-            const already = ex.users.some((u: any) => (typeof u === 'string' ? u : u.username) === user.username);
-            if (already) return prev;
-            return prev.map((vc: any) => vc.channelId === channel.name ? { ...vc, users: [...vc.users, newUser] } : vc);
-          }
-          return [...prev, { channelId: channel.name, users: [newUser] }];
-        });
-      }
+      setIsInVoice(true);
+      setCurrentVoiceChannelName(channel.name);
+      // Don't modify voiceChannels locally - let server handle it via voice-channel-update
     } catch (err) { console.error('Failed to join voice:', err); }
   }, [user, isInVoice, currentVoiceChannelName]);
 
@@ -647,25 +607,27 @@ const VibeSpeakAppContent: React.FC = () => {
   const handleJoinVoice = useCallback(async () => {
     if (!user) return;
     try {
-      // Update refs BEFORE joining so voice-channel-update handler has correct values
+      // Update refs BEFORE joining
       isInVoiceRef.current = true;
       currentVoiceChannelNameRef.current = currentChannelName;
       
       await voiceClient.joinVoiceChannel(currentChannelName, undefined, user.username);
-      setIsInVoice(true); setCurrentVoiceChannelName(currentChannelName);
-      addLocalUserToVoice(currentChannelName, user.username);
+      setIsInVoice(true);
+      setCurrentVoiceChannelName(currentChannelName);
+      // Don't modify voiceChannels locally - let server handle it via voice-channel-update
     } catch (err) { console.error('Failed to join voice:', err); }
-  }, [currentChannelName, user, addLocalUserToVoice]);
+  }, [currentChannelName, user]);
 
   const handleLeaveVoice = useCallback(async () => {
     if (!user) return;
     voiceClient.leaveVoiceChannel();
-    if (currentVoiceChannelName) removeLocalUserFromVoice(currentVoiceChannelName, user.username);
-    // Update refs immediately to prevent race condition with voice-channel-update
+    // Update refs immediately
     isInVoiceRef.current = false;
     currentVoiceChannelNameRef.current = undefined;
-    setIsInVoice(false); setCurrentVoiceChannelName(undefined);
-  }, [user, currentVoiceChannelName, removeLocalUserFromVoice]);
+    setIsInVoice(false);
+    setCurrentVoiceChannelName(undefined);
+    // Don't modify voiceChannels locally - let server handle it via voice-channel-update
+  }, [user]);
 
   const handleStartScreenShare = useCallback(async () => {
     try { await voiceClient.startScreenShare(); }
