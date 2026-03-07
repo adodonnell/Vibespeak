@@ -74,10 +74,20 @@ function createWindow() {
 }
 
 function createTray() {
-  // Create a simple tray icon (16x16 transparent)
-  const icon = nativeImage.createEmpty();
+  // Create a simple tray icon - use a data URL for a basic icon
+  // In production, you'd use a proper icon file from build resources
+  const iconPath = path.join(__dirname, '../build/icon.png');
+  let icon: Electron.NativeImage;
   
-  tray = new Tray(icon);
+  if (existsSync(iconPath)) {
+    icon = nativeImage.createFromPath(iconPath);
+  } else {
+    // Fallback: create a simple colored square icon programmatically
+    // 16x16 blue square as fallback
+    icon = nativeImage.createEmpty();
+  }
+  
+  tray = new Tray(icon.isEmpty() ? nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABHNCSVQICAgIfAhkiAAAADFJREFUOE9jZGBg+M+ABhA8YDTg/4H8////Z0QDBgYGBob/QAEjA8N/oAQjA8N/oISRAYEBAH2cF/kKqB/qAAAAAElFTkSuQmCC') : icon);
   tray.setToolTip('VibeSpeak');
   
   const contextMenu = Menu.buildFromTemplate([
@@ -108,29 +118,26 @@ function createTray() {
 
 function registerGlobalShortcuts() {
   // Register global shortcut for push-to-talk (Ctrl+Shift+V)
-  // This allows PTT even when app is not focused
+  // Note: Electron globalShortcut doesn't support key up/down - fires on key press only
+  // The renderer handles voice transmission while key is held
+  if (globalShortcut.isRegistered('CommandOrControl+Shift+V')) {
+    globalShortcut.unregister('CommandOrControl+Shift+V');
+  }
   globalShortcut.register('CommandOrControl+Shift+V', () => {
     console.log('[Electron] Global PTT shortcut triggered');
-    // This would need to communicate with the renderer process
-    // For now, we just log it
     mainWindow?.webContents.send('global-ptt', true);
-  });
-  
-  globalShortcut.register('CommandOrControl+Shift+V', () => {
-    // Release
-    console.log('[Electron] Global PTT shortcut released');
-    mainWindow?.webContents.send('global-ptt', false);
   });
 }
 
 function setupDeepLinks() {
   // Register protocol handler for vibespeak:// URLs
+  const protocolName = 'vibespeak';
   if (process.defaultApp) {
     if (process.argv.length >= 2) {
-  app.setAsDefaultProtocolClient('disorder', process.execPath, [path.resolve(process.argv[1])]);
+      app.setAsDefaultProtocolClient(protocolName, process.execPath, [path.resolve(process.argv[1])]);
     }
   } else {
-    app.setAsDefaultProtocolClient('disorder');
+    app.setAsDefaultProtocolClient(protocolName);
   }
   
   // Handle protocol URL on Windows
@@ -142,7 +149,7 @@ function setupDeepLinks() {
     }
     
     // Handle the deep link
-    const url = commandLine.find(arg => arg.startsWith('disorder://'));
+    const url = commandLine.find(arg => arg.startsWith('vibespeak://'));
     if (url) {
       handleDeepLink(url);
     }
